@@ -1,0 +1,161 @@
+---
+title: "Pairwise Body Site Composition Modeling"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+#REC and NAS without the throat
+
+#Start time
+start.time <- Sys.time()
+
+#Load packages
+library(data.table)
+library(readr)
+library(nlme)
+library(splines)
+library(MuMIn)
+
+
+#Hard coded constants
+bodySites <- c("THR", "NAS", "REC")
+taxLevels <- c("L2", "L3", "L4", "L5", "L6", "L7")
+constCols <- c("gaBirth", "ModeOfDelivery", "ns(DOL, 14)")
+
+## Todo: use sum-to-zero contrasts
+thrWts <- c("THR_CST_1", "THR_CST_2", "THR_CST_4", "THR_CST_5", "THR_CST_6") #Base case is CST 3
+nasWts <- c("NAS_CST_1", "NAS_CST_2", "NAS_CST_4", "NAS_CST_5", "NAS_CST_6", "NAS_CST_7") #Base case is CST 3
+recWts <- c("REC_CST_1", "REC_CST_2", "REC_CST_4", "REC_CST_5", "REC_CST_6") #Base case is CST 3
+workDir <- "./"##~/Desktop/MiSeq_Projects/12.00012_Microbiome_Master/Substudy_2_1a/analysis/stage_analysis_workspace/rigor_analysis/composition_modeling_data/workspace" #Directory where files will be read from and written to
+minSampFrac <- 0.05 #Minimum fraction of samples in which an OTUs abundance must be non-zero in order to be included
+
+andrew_rsq = function(empty, null, full){
+    (deviance(full) - deviance(null))/deviance(empty)
+}
+
+nakagawa_rsq = function(empty, null, full, type='R2m'){
+    type = match.arg(type, c('R2m', 'R2c'))
+    r.squaredGLMM(full)[type] - r.squaredGLMM(null)[type]
+}
+
+## match *_CST columns and subtract off 1/(# CST) so that the intercept represents the grand mean
+## and the CST coefficients represent deviations from the grand mean
+center_csts = function(table){
+    nas_col = names(table) %like% 'NAS_CST'
+    rec_col = names(table) %like% 'REC_CST'
+    thr_col = names(table) %like% 'THR_CST'
+    for(cl in list(nas_col, rec_col, thr_col)) {
+        table[,cl] = table[,cl] - 1/(sum(cl))
+    }
+    
+    table
+}
+
+for (site in bodySites) {
+  
+  otherSites <- switch(site, THR=c("NAS", "REC"), NAS=c("THR", "REC"), REC=c("THR", "NAS"))
+  
+  for (otherSite in otherSites) {
+  
+    for (tax in taxLevels) {
+      
+      #Load table and mapping file and make sure column names are okay
+      raw_otu_table <- read_tsv(paste(workDir, sprintf("%s_%s.txt", site, tax), sep = "/"))
+      colnames(raw_otu_table) <- make.names(colnames(raw_otu_table), unique = TRUE)
+      mapping <- read_tsv(paste(workDir, sprintf("%s_Mapping.txt", site), sep = "/"))
+      colnames(mapping) <- make.names(colnames(mapping), unique = TRUE)
+      
+      #Merge the mapping and OTU info
+      full_table <- merge(mapping, raw_otu_table, by = "SampleID")
+      
+      #Determine which variables will be used based on the outcome body site
+      usedCols <- switch(otherSite, THR=c(thrWts), NAS=c(nasWts), REC=c(recWts))
+      
+      #Remove NAs from the column used in the full model
+      nona_table <- full_table[complete.cases(full_table[, usedCols]), ]
+      nona_table_center <- center_csts(nona_table)
+      
+      #Remove OTUs that are present in too few samples
+      strt_otus <- ncol(mapping) + 1
+      minSamp <- nrow(nona_table_center)*minSampFrac
+      otu_table <- nona_table_center[, strt_otus:ncol(nona_table_center)]
+      rare_otus <- otu_table[, colSums(otu_table != 0) < minSamp]
+      working_table <- nona_table_center[, !(names(nona_table_center) %in% names(rare_otus))]
+      
+      #Determine some constants about our table
+      end_otus <- ncol(working_table) #Last column containing an OTU
+      num_otus <- end_otus - strt_otus + 1 #Total number of OTUs
+      otu_ids <- colnames(working_table)[strt_otus:end_otus] #List of OTU names
+      
+      #Initialize these things that will each hold a different fitted model for each OTU
+      full_fits <- list() #Full model
+      null_fits <- list() #Model excluding cluster weights of other body sites
+      empty_fits <- list() #Model with only intercept and random effect for subject
+      
+      #Initialize these things to hold the results of our analyses of the fitted models
+      f_test <- list()
+      rsq <- list()
+      pvals <- list()
+      
+      #Set all the fixed effects
+      fixedTerms = c(constCols, usedCols)
+      
+      #Loop through the columns that contain OTUs
+      for(otu_i in 1:num_otus) {
+        
+        #Arcsin square root transform the OTU's abundances, and rescale to [0,1]
+        working_table$norm_abnd <- asin(sqrt(sapply(working_table[, otu_i + strt_otus - 1], as.numeric)))*2/pi
+       
+        #Fit the full model
+        full_fits[[otu_i]] <- lme(as.formula(paste("norm_abnd ~ ", paste(fixedTerms, collapse = " + "), sep = "")), random = ~ 1|ParticipantId, data = working_table, method = "ML")
+        
+        #Attach the OTU name to the fit
+        full_fits[[otu_i]]$otu <- otu_ids[otu_i]
+        
+        #Fit the null model
+        null_fits[[otu_i]] <- lme(as.formula(paste("norm_abnd ~ ", paste(constCols, collapse = " + "), sep = "")), random = ~ 1|ParticipantId, data = working_table, method = "ML")
+        
+        #Fit the empty model
+        empty_fits[[otu_i]] <- lme(norm_abnd ~ 1, random = ~ 1|ParticipantId, data = working_table, method = "ML")
+        #ANOVA to compare goodness of fit of full and null models
+        f_test[[otu_i]] <- anova.lme(full_fits[[otu_i]], null_fits[[otu_i]])
+        pvals[otu_i] <- f_test[[otu_i]]$`p-value`[2] #Save the p-value of each test
+        
+        #Compute R-squared value associated with the inclusion of the cluster weights of the other body sites
+        #rsq[otu_i] = andrew_rsq(empty_fits[[otu_i]], null_fits[[otu_i]], full_fits[[otu_i]])
+        rsq[otu_i] = nakagawa_rsq(empty_fits[[otu_i]], null_fits[[otu_i]], full_fits[[otu_i]])
+         #browser(expr=otu_ids[otu_i] == 'k__Bacteria.p__Actinobacteria.c__Actinobacteria.o__Actinomycetales.f__Corynebacteriaceae.g__Corynebacterium.s__')
+      }
+      
+      
+      
+      #Multiple test correction
+      adj_pvals <- p.adjust(pvals, method = "fdr")
+      
+      #Aggregate and write to a file the R-squared, p-, and adjusted p-values for each OTU
+      results <- cbind(otu_ids, rsq, pvals, adj_pvals)
+      write.csv(results, paste(workDir, sprintf("%s_using_%s_%s_results.csv", site, otherSite, tax), sep = "/"))
+      
+      #Save the fitted full model
+      save(full_fits, file = paste(workDir, sprintf("%s_using_%s_%s_fitted_models.rda", site, otherSite, tax), sep = "/"))
+      
+    }
+    
+  }
+  
+}
+
+#End time
+end.time <- Sys.time()
+
+#Print total runtime
+cat("Total runtime:")
+(time.taken <- end.time - start.time)
+
+
+```

@@ -1,0 +1,89 @@
+---
+title: "Get Composition Model P-values"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+#Start time
+start.time <- Sys.time()
+
+#Load packages
+library(readr)
+library(nlme)
+library(splines)
+library(stringr)
+library(car)
+
+#Hard coded constants
+bodySites <- c("THR", "NAS", "REC")
+taxLevels <- c("L2", "L3", "L4", "L5", "L6", "L7")
+# workDir <- "~/Desktop/MiSeq_Projects/12.00012_Microbiome_Master/Substudy_2_1a/analysis/stage_analysis_workspace/rigor_analysis/composition_modeling_data/workspace"
+#relative to the path of this script
+workDir = './'
+#Directory where files will be read from and written to
+
+miss_cst = c(REC = 'REC_CST_3', NAS = 'NAS_CST_3', THR = 'THR_CST_3')
+present_cst = list(THR = c("THR_CST_1", "THR_CST_2", "THR_CST_4", "THR_CST_5", "THR_CST_6"),
+NAS = c("NAS_CST_1", "NAS_CST_2", "NAS_CST_4", "NAS_CST_5", "NAS_CST_6", "NAS_CST_7"),
+REC =  c("REC_CST_1", "REC_CST_2", "REC_CST_4", "REC_CST_5", "REC_CST_6"))
+
+for (site in bodySites) {
+  
+  otherSites <- switch(site, THR=c("NAS", "REC"), NAS=c("THR", "REC"), REC=c("THR", "NAS"))
+  
+  for (otherSite in otherSites) {
+  
+    for (tax in taxLevels) {
+      
+      #Load the fitted full models for the given predictor and outcome body sites and given taxonomic level
+      this_file = file.path(workDir, sprintf("%s_using_%s_%s_fitted_models.rda", site, otherSite, tax))
+      load(file = this_file)
+      
+      #Initialize the thing to hold the values that will be written as output
+      betas_by_otu <- pvals_by_otu <- vector('list', length = length(full_fits) + 1)
+      names(betas_by_otu) <- names(pvals_by_otu)[[1]] <- 'Predictor'
+
+      #Set the first row of the output to be the names of the covariates in the model + the derived CST
+      betas_by_otu[[1]] <- pvals_by_otu[[1]] <- c(names(summary(full_fits[[1]])$tTable[,"p-value"]), miss_cst[otherSite])
+      to_test = str_c(' -', paste(present_cst[[otherSite]], collapse = ' -'))
+      #Loop through all the models (one for each otu)
+      for (otu_i in 1:length(full_fits)) {
+        
+        #Add a column to the output with the OTU name and adjusted p-values for each term
+        this_pval = summary(full_fits[[otu_i]])$tTable[,"p-value"]
+        this_beta = fixef(full_fits[[otu_i]])
+        missing_cst_test = lht(full_fits[[otu_i]], to_test)
+        missing_cst_beta = -sum(this_beta[present_cst[[otherSite]]])
+        pvals_by_otu[[otu_i + 1]] <- c(this_pval, missing_cst_test[2, 'Pr(>Chisq)'])
+        betas_by_otu[[otu_i + 1]] <- c(this_beta, missing_cst_beta)
+        names(betas_by_otu)[otu_i + 1] <- names(pvals_by_otu)[otu_i + 1] <- full_fits[[otu_i]]$otu
+      }
+      
+    out_table_pval = as.data.frame(pvals_by_otu)
+    out_table_beta = as.data.frame(betas_by_otu)
+      # adjust for multiple testing
+      #out_table[,-1] = t(apply(out_table[,-1], 1, p.adjust, method = 'fdr'))
+      #Write the output
+      write.table(out_table_pval, file.path(workDir, 'Covariate p-values', sprintf("%s_using_%s_%s_pvals.csv", site, otherSite, tax)), sep = ",", row.names = FALSE, col.names = TRUE)
+      write.table(out_table_beta, file.path(workDir, 'Betas', sprintf("%s_using_%s_%s_betas.csv", site, otherSite, tax)), sep = ",", row.names = FALSE, col.names = TRUE)
+
+    }
+    
+  }
+  
+}
+
+#End time
+end.time <- Sys.time()
+
+#Print total runtime
+cat("Total runtime:")
+(time.taken <- end.time - start.time)
+
+
+```

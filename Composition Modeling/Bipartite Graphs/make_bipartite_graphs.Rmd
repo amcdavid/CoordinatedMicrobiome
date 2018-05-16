@@ -1,0 +1,59 @@
+---
+title: "make_bipartite_graphs"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+#Load packages (Probably don't even need half of them - I tried a lot of things before I settled on this relatively simple solution.)
+library(ggplot2)
+library(network)
+library(igraph)
+library(sna)
+library(ggnetwork)
+library(GGally)
+library(ergm)
+library(intergraph)
+library(RColorBrewer)
+
+#Define constants
+
+workDir <- "~/Desktop/MiSeq_Projects/12.00012_Microbiome_Master/Substudy_2_1a/analysis/stage_analysis_workspace/rigor_analysis/composition_modeling_data/workspace/bipartite_graph_workspace/" #Directory where files will be read from and written to
+
+rec_csts = c("REC_CST_1", "REC_CST_2", "REC_CST_3", "REC_CST_4", "REC_CST_5", "REC_CST_6")
+thr_csts = c("THR_CST_1", "THR_CST_2", "THR_CST_3", "THR_CST_4", "THR_CST_5", "THR_CST_6")
+nas_csts = c("NAS_CST_1", "NAS_CST_2", "NAS_CST_3", "NAS_CST_4", "NAS_CST_5", "NAS_CST_6", "NAS_CST_7")
+sites = c("nas", "rec", "thr")
+
+#Loop through the sites and make a figure for each as the target site (i.e. predicted by the CSTs of the other two sites)
+for (site in sites) {
+
+  #Read in the site-specific adjacency matrix specifying associations between taxa and the CSTs of the other body sites
+  adj.matrix <- read.table(file = paste(workDir, sprintf("%s_adj.csv", site), sep = "/"), header= T, sep= ",", row.names= 1)
+  
+  #Use that adjacency matrix to construct a network object that is bipartite
+  net.obj <- network(adj.matrix, matrix.type = "bipartite", ignore.eval = FALSE, names.eval = "weights")
+  
+  #Color the CST vertices according to the body site they represent
+  network::set.vertex.attribute(net.obj, "color", ifelse(net.obj %v% "vertex.names" %in% rec_csts, "violet", ifelse(net.obj %v% "vertex.names" %in% thr_csts, "yellow", ifelse(net.obj %v% "vertex.names" %in% nas_csts, "green", "grey75"))))
+  
+  #Make non-significant associations invisible
+  network::set.edge.attribute(net.obj, "alpha", ifelse(net.obj %e% "weight" == 0.0, 0, 1))
+  
+  #Make a color gradient that will be used to color the edges
+  rbPal <- colorRampPalette(c('darkblue', 'cyan', 'white', 'yellow', 'red'))
+  
+  #Map edge weights (signed log10 FDR adjusted p-vals) to colors in the gradient
+  ecols <- rbPal(10)[as.numeric(cut(network::get.edge.attribute(net.obj, "weights"), breaks = 10))]
+  
+  #Draw the graph and save it to a file.
+  ggnet2(net.obj, color = "color", edge.color = ecols, label = TRUE, edge.size = 1)
+  ggsave(paste(workDir, sprintf("%s_graph.pdf", site), sep = "/"), width = 15, height = 15, units = "in")
+
+}
+
+```

@@ -1,0 +1,352 @@
+---
+title: "Metacommunity associations"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+author: "Andrew McDavid, Steven Gill, Alex Grier"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+html_notebook: default
+---
+    
+```{r library}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE, autodep=TRUE, message=FALSE, warning=FALSE)
+library(data.table)
+library(ggplot2)
+library(stringr)
+library(DT)
+library(broom)
+library(dplyr)
+library(dtplyr)
+library(biomformat)
+library(ComplexHeatmap)
+library(SummarizedExperiment)
+library(GGally)
+library(ggthemes)
+library(ggrepel)
+library(mgcv)
+library(readr)
+library(circlize)
+library(forcats)
+
+
+samp_info = fread('data/OTU Table Summary_2017-05-19_00-48-52.csv')
+names(samp_info) = make.names(names(samp_info))
+WRITE_FILES = FALSE
+knitr::opts_chunk$set(cache.path=paste0('metacommunity_post_analysis_', whoami::username(), '_cache/'))
+```
+
+```{r}
+comp_res_files = list.files('Composition Modeling/Model p- and R-squared values/', pattern = '.*L[3-7].*.csv', full.names = TRUE)
+
+print_labels = readxl::read_excel('Composition Modeling/Bipartite Graphs/PrintableLabels.xlsx') %>% mutate(otu_ids = str_replace_all(OrigName, '\\|', '.'))
+load_paired_associations = function(list_of_files, fill = FALSE){
+    res_all = lapply(list_of_files, fread) %>% rbindlist(idcol='fidx', fill = fill)
+ids = data.table(fname = str_replace(list_of_files, 'REC', 'GUT'))[, pairing:=str_match(fname, '//([A-Z]+_using_[A-Z]+)')[,2]][,level := str_match(fname, '(L[3-7])')[,2]][, fidx := .I]
+res_all = res_all %>% left_join(ids, by='fidx') %>% select(-c(fidx,fname)) %>% mutate(pair1 = str_match(pairing, '([A-Z]+)_using')[,2], pair2 = str_match(pairing, '_using_([A-Z]+)')[,2])
+    res_all
+}
+
+pairs_ftest_r2 = load_paired_associations(comp_res_files)  %>% left_join(print_labels, by = 'otu_ids', copy = TRUE)
+```
+
+Load the regression results (joint F-tests), pull out what is regressed on what.  pair1 = OTU, pair2 = CST
+
+
+## Composition of CST
+
+```{r compositions, fig.height = 8, fig.width = 4}
+library(DirichletMultinomial)
+library(tidyr)
+site_plots = list()
+
+for(site in c('nas', 'rec', 'thr')){
+    load(sprintf('DMN Cluster Selection/%s_adj_best.rda', site))
+    fitted_best = fitted(adj_best) %>% as.data.frame() %>% tibble::rownames_to_column(var = 'OrigName') 
+    fitted_best = melt(fitted_best, id = 'OrigName', value.name = 'Dirichlet param') %>% left_join(print_labels, by = 'OrigName') %>% mutate(CST_num = factor(str_match(variable, '[0-9]')))
+    top_fitted = fitted_best %>% group_by(variable) %>% filter(rank(-`Dirichlet param`) < 10)
+    site_plots[[site]] = ggplot(fitted_best %>% semi_join(top_fitted, by = c('OrigName')), aes(y = `Printable Label`, x = `Dirichlet param`,color = CST_num, label = CST_num))  + geom_text() + theme(legend.position = 'none', axis.text.y = element_text(angle = -30))
+}
+
+cowplot::plot_grid(plotlist = site_plots, labels = names(site_plots), nrow = 3)
+```
+
+```{r abundance, fig.height= 8, fig.width = 8}
+Sites = c('NAS', 'THR', 'REC')
+Plts = list()
+for(s in Sites){
+    otu_avg_cst = read_table2('DMN Cluster Selection/CST_Comp_Table_L6.txt', comment = '#') %>% melt() %>% mutate(site = str_extract(variable, 'NAS|REC|THR')) %>% left_join(print_labels %>% mutate(OTU_ID = str_replace_all(OrigName, fixed('|'), ';'))) %>% rename('Printable Label' = 'print_label')
+    otu_avg_cst = otu_avg_cst %>% group_by(OTU_ID, site) %>% mutate(max_value = var(value)) %>% group_by(site, variable) %>% mutate(site_rank = rank(-max_value)) %>% filter(site == s, site_rank < 30)
+
+    otu_avg_cst = otu_avg_cst %>% mutate(OTU_ID = factor(OTU_ID) %>% forcats::fct_reorder(x = site_rank)) %>% group_by(variable, site) %>% arrange(desc(OTU_ID), .by_group = TRUE) %>% mutate(cum_sum = cumsum(value), lab_pos = lag(cum_sum), line_pos = cum_sum - value/2)
+
+    Plts[[s]] = ggplot(otu_avg_cst, aes(x = variable, group = OTU_ID, fill = print_label)) + geom_col(aes(y = value), alpha = .9) + geom_path(aes(y = line_pos, color = print_label)) +geom_text(aes(y = lab_pos, label = print_label), angle = 45, hjust = 0, vjust = 0, size = 2)+ theme_classic()+  scale_color_brewer(type = 'div', palette = 'RdYlGn') + scale_fill_brewer(type = 'div', palette = 'RdYlGn')+  theme(legend.position = 'none', axis.text.x = element_text(angle = 45)) + ylab("Average cummulative abundance") 
+}
+
+cowplot::plot_grid(plotlist = Plts, labels = Sites, ncol = 3)
+
+```
+
+## Make some "Pseudo-volcano" plots
+
+
+
+```{r pseudo_volcano, results = 'hide', dev = c('png', 'pdf')}
+pairs_ftest_r2 = pairs_ftest_r2 %>% group_by(pairing) %>% mutate(rank = rank(pvals), show_label = rank<6 & adj_pvals < .1)
+fdr_thres = pairs_ftest_r2 %>% dplyr::mutate(fdr = p.adjust(pvals, method='fdr'), pvals = pvals) %>% dplyr::summarise(pval_fdr_10 = pvals[which.min(abs(fdr-.1))])
+ggplot(pairs_ftest_r2, aes(x=rsq, y=-log10(pvals), color = pair2)) + geom_point() + theme_minimal() + xlab('Change in R^2') + ylab('-log10(P)') + scale_color_ptol('Predicted\nusing') + geom_hline(data = fdr_thres,  aes(yintercept = -log10(pval_fdr_10)), linetype = 2) + facet_wrap(~pair1) + geom_text_repel(data=pairs_ftest_r2 %>% filter(show_label), aes(label =`Printable Label`), size=2.5)
+pairs_ftest_r2 
+```
+
+Volcano-like plot.  Horizontal like shows experiment-wide 10% FDR (`fdr_thres`)
+
+## Heatmap of CST-OTU associations
+ 
+```{r load_betas}
+pval_files = list.files('Composition Modeling/Covariate p-values/', pattern = '.*L[3-7].*.csv', full.names = TRUE)
+beta_files = list.files('Composition Modeling/Betas/', pattern = '.*L[3-7].*.csv', full.names = TRUE)
+
+pairs_pvals_cst = load_paired_associations(pval_files, fill = TRUE) %>% mutate(stat = 'pval')
+pairs_betas_cst = load_paired_associations(beta_files, fill = TRUE) %>% mutate(stat = 'beta')
+
+pairs_beta_pvals = rbind(pairs_pvals_cst, pairs_betas_cst)  %>% melt(id.vars = c('Predictor', 'stat', 'pair1', 'pair2', 'pairing', 'level'))  %>% dplyr::rename(otu = variable)
+
+# these are species that were not present in one of the sites
+bad = (pairs_beta_pvals$value %>% as.numeric() %>% is.na()) #!= (pairs_beta_pvals$value %>% is.na())
+bad_count = pairs_beta_pvals[bad,] %>% select(pair2, otu, Predictor) %>% group_by(pair2, otu) %>% summarize(n())
+
+min_na_nowarn = function(...){
+    suppressWarnings(min(...))
+}
+
+pairs_signed_p = pairs_beta_pvals %>% dcast(Predictor + pair1+pair2 + pairing + otu + level ~ stat) %>% mutate(beta = as.numeric(beta), pval = as.numeric(pval)) %>% group_by(Predictor) %>% filter(Predictor %like% '(REC|NAS|THR)_CST_[0-9]+')   %>% mutate(adj_pval = p.adjust(pval, method = 'fdr'))  %>% mutate(log10_p_signed = sign(beta) *-log10(adj_pval)) %>%  mutate(Predictor = str_extract(Predictor, 'CST_[0-9]')) %>% group_by(pair1, otu) %>% mutate(min_pval_overall = min_na_nowarn(adj_pval, na.rm = TRUE))
+
+ggplot(pairs_signed_p, aes(x = -log10(pval), y = log10_p_signed)) + geom_point() + facet_grid(pair1 ~ pair2)
+
+ggplot(pairs_signed_p %>% arrange(otu, pair1, pair2) %>% head(200), aes(x = min_pval_overall, y = adj_pval, color = pair1)) + facet_wrap(~otu)  + geom_point() + scale_x_log10() + scale_y_log10() + geom_abline(slope = 1, intercept = 0)
+
+pairs_cst_signed_p = pairs_signed_p  %>% dcast(pair1 +level + otu + min_pval_overall ~ pair2+Predictor, value.var = 'log10_p_signed')
+
+```
+
+```{r write_pval_table, eval = WRITE_FILES}
+readr::write_csv(pairs_cst_signed_p, path = 'metacommunity_post_analysis_files/pairs_cst_signed_p.csv')
+
+old = readr::read_csv('metacommunity_post_analysis_files/pairs_cst_signed_p_old.csv')
+
+compare_old = left_join(old %>% select(pair1, otu, min_pval_overall, REC_CST_1, THR_CST_1, NAS_CST_4), pairs_cst_signed_p, by = c('otu', 'pair1'))
+ggplot(compare_old, aes(x=min_pval_overall.x, y=min_pval_overall.y))+ geom_point() + xlab('CST 3 as reference') + ylab('Average CST as reference')
+ggplot(compare_old, aes(x=REC_CST_1.x, y=REC_CST_1.y))+ geom_point() + xlab('CST 3 as reference') + ylab('Average CST as reference')
+ggplot(compare_old, aes(x=(THR_CST_1.x+THR_CST_1.y)/2, y = THR_CST_1.y - THR_CST_1.x))+ geom_point() + xlab('CST 3 as reference') + ylab('Average CST as reference')
+
+```
+
+```{r write_otu_crosswalk, eval = WRITE_FILES}
+
+otu_crosswalk = pairs_signed_p %>% group_by(otu) %>% mutate(min_pval_any = min(pval, na.rm = TRUE), pairs_not_na = round(sum(!is.na(pval))/5)) %>% dcast(otu + min_pval_any + pairs_not_na ~ pair1 + pair2 + Predictor, value.var = 'log10_p_signed')
+
+names_taxonomy = str_split_fixed(otu_crosswalk$otu, '[.]*.?__[.]*', n=8)[,-1]
+colnames(names_taxonomy) = paste('L', 1:7, sep = '')
+names_taxonomy = names_taxonomy %>% as_tibble() %>% mutate(printable_attempt = str_c(abbreviate(L5, 10, ), ' ', abbreviate(L6, 10), ' ', L7))
+
+otu_crosswalk = cbind(names_taxonomy, otu_crosswalk)
+readr::write_csv(otu_crosswalk, path = 'metacommunity_post_analysis_files/otu_printable_names_crosswalk.csv')
+
+
+```
+
+
+
+```{r cst_otu_heat}
+make_matrix = function(df){
+    m = as.matrix(df[,-1:-3])
+    allna = colSums(is.na(m)) == nrow(m)
+    m = m[,!allna]
+    m[is.na(m)] = 0
+    rownames(m) = df[[2]]
+    m
+}
+
+pairs_matrix = pairs_cst_signed_p %>% filter(min_pval_overall < .1) %>% select(-min_pval_overall) %>% group_by(pair1) %>% do(pair_mat = .%>% make_matrix)
+
+pairs_matrix %>% group_by(pair1) %>% do({
+    hm = Heatmap(.[[1,2]], row_names_gp = gpar(cex = .25), col = colorRamp2(c(-4, 0, 4), c('green', 'white', 'red')), name = .[[1,1]])
+    print(hm)
+    .
+})
+
+```
+
+```{r load_metacommunities}
+## Files are named with "REC"
+mc_files = list.files('DMN Cluster Selection/', full.names=TRUE, pattern = '*._Mapping.txt')
+names(mc_files)  = str_match(mc_files, 'THR|REC|NAS')
+mc_list = lapply(mc_files,  function(x){
+    y = x %>% fread() %>% mutate(week_of_life = DOL/7)
+    names(y) = str_replace_all(names(y), '_CST_', ' CST ') %>% str_replace_all('REC', 'GUT')
+    y
+    })
+## Change REC -> GUT
+names(mc_list)[names(mc_list) == 'REC'] = 'GUT'
+
+```
+
+The Nasal set is most extensive (not sure if it's a superset though) with `r nrow(mc_list$NAS)` obs.
+
+## Correlations of CST
+
+```{r pairwise_cor, dev = c('png', 'pdf')}
+do_cor = . %>% select(matches('^(THR|GUT|NAS) CST .')) %>% cor(., use='pairwise')
+nas_cor = do_cor(mc_list$NAS)
+dist_identity = function(x) 1 - as.dist(x)
+Heatmap(nas_cor, clustering_distance_columns = dist_identity, clustering_distance_rows = dist_identity, circlize::colorRamp2(c(-1, 0, 1), c("green", "white", "red")), name = 'Pearson\nCorrelation', column_title = 'CST Correlation',  row_names_gp = gpar(fontsize = 9),  column_names_gp = gpar(fontsize = 9))
+
+```
+
+
+
+## Relationship of CST to week_of_life
+
+```{r regressions}
+melter = . %>% melt(id.vars = c('ID', 'week_of_life', 'gaBirth', 'ParticipantId')) %>% mutate(preterm = gaBirth < 37, ParticipantId = factor(ParticipantId), preterm_days = (37 - gaBirth)*7)
+
+mc_dat_melted = function(type){  
+    selector = . %>% select(starts_with(type), c(week_of_life, gaBirth, ID, ParticipantId))
+    data = mc_list[[type]] %>% selector %>% melter 
+}
+
+dol_cga_regressions = function(type){
+    title = paste(switch(type, NAS = 'Nasal', GUT = 'Gut', THR = 'Throat'), 'CSTs')
+    data = mc_dat_melted(type)
+    #browser()
+    plt = ggplot(data, aes(x = week_of_life, y = value, color = preterm)) + geom_jitter(size = .5) + facet_wrap(~variable) + theme_minimal() + scale_color_ptol() + geom_smooth()
+    print(plt + ggtitle(title))
+    #print(plt + aes(x = gaBirth) + xlab('Gestuational Age at Birth'))
+    
+}
+
+dol_cga_regressions('NAS')
+dol_cga_regressions('THR')
+dol_cga_regressions('GUT')
+
+gam_fitter = function(x){
+    plyr::dlply(x, ~variable, . %>% gam(value ~ s(week_of_life) + gaBirth + s(ParticipantId, bs='re'), data=.))
+}
+```
+
+## Spaghetti plots
+```{r}
+ggplot( mc_dat_melted('NAS'), aes(x = gaBirth + week_of_life, y = value))+ geom_line(aes(group = ParticipantId), alpha = .3) + facet_wrap(~variable)
+```
+
+TODO: write a function that fits the single index that support a `predict` method, and return the single index parameter estimates
+Then plot single index model as a function of week_of_life for various preterm days
+And plot the single index "lines" that are being satisfied on the 2-D gam plots
+
+```{r singleindex}
+devtools::load_all('SingleIndex')
+
+
+model = value ~  s(ParticipantId, bs='re')
+si_chunk = function(data){
+    # f0 <- nlm(si,1, model = model, x_si=cbind(data$week_of_life, data$gaBirth), gam_data = data, fx=TRUE)
+    # f1 <- nlm(si,f0$estimate,  model = model, x_si=cbind(data$week_of_life, data$gaBirth), gam_data = data, hessian=TRUE, fx = FALSE)
+    # b <- si(f1$estimate, model = model, x_si=cbind(data$week_of_life, data$gaBirth), gam_data = data, opt = FALSE)
+    b = fit_si(model = model, x_si = cbind(week_of_life = data$week_of_life, gaBirth = data$gaBirth), gam_data = data)
+    plot(b,scheme = 2, select = 2, sub = sprintf("y = %1.2f + f(%0.2f * week_of_life + %0.2f * ga_at_birth)", b$coefficients[1], b$alpha[1], b$alpha[2]), main = unique(data$variable))
+    span = Effect_si(focal_si = 1:2, mod = b, length_out = c(20, 3))
+    span = span %>% mutate(.fittedlo = .fitted.fit - .fitted.se.fit, .fittedhi = .fitted.fit + .fitted.se.fit)
+    tibble(span = list(span), model = list(b), si_coef = list(b$alpha))
+}
+
+mv_chunk = function(data){
+    b = gam(update(model, . ~ . + s(week_of_life,gaBirth)), data = data)
+    b0 = gam(model, data = data)
+    #plot(b, select = 3, scheme = 1)
+    #plot(b, select = 4, scheme = 2)
+    test = anova(b0, b, test = 'F')
+    #term = 's(week_of_life,gaBirth)'
+    term_p = as_data_frame(test[2,,drop = FALSE])
+    #cb = data_frame(model= list(b))
+    pred_x = expand.grid(week_of_life = seq(min(data$week_of_life), max(data$week_of_life), length.out = 20), gaBirth = seq(24, 41, length.out = 3), ParticipantId = data$ParticipantId[1])
+    pred_list = predict(b, newdata = pred_x, type = 'terms', se.fit = TRUE)
+    pred = data.frame(.fitted = pred_list$fit[,2] + attr(pred_list, 'constant'), .se = pred_list$se.fit[,2], pred_x) %>% mutate(.fittedlo = .fitted - .se, .fittedhi = .fitted + .se)
+    pred = pred %>% mutate(PMA = week_of_life + gaBirth)
+    tt = c(gam = list(list(b)), pred = list(list(pred)), term_p)
+    as_tibble(tt)
+}
+
+```
+
+## Joint model
+```{r mv_dol_chunk, dev = c('png', 'pdf')}
+models_etc = list()
+for(site in c('NAS', 'GUT', 'THR')){
+    mv = mc_dat_melted(site) %>% group_by(variable) %>% do(mv_chunk(.))
+    models_etc[[site]] = mv %>% mutate(site = site)
+   
+}
+
+mv_all = bind_rows(models_etc) %>% as_tibble()
+
+```
+### Projections of multivariate models
+```{r cst_week_gabirth, fig.width = 8, fig.height = 8, dev = c('png', 'pdf')}
+pred_all = unnest(mv_all, pred) %>% mutate(variable = reorder(factor(variable), `Pr(>F)`,  min))
+PMA_at_max = pred_all %>% group_by(variable)  %>% summarize(max_PMA = PMA[which.max(.fitted)]) %>% mutate(max_PMA_rank = rank(max_PMA, ties.method = 'first')) %>% select(-max_PMA)
+pred_all = left_join(pred_all, PMA_at_max) %>% mutate(variable_PMA = reorder(variable, max_PMA_rank, min))
+
+pred_all_plot = ggplot(pred_all, aes(x = week_of_life, y = .fitted, color = gaBirth, group = factor(gaBirth)))+geom_line() + facet_wrap(~variable_PMA, scales = 'free_y') + theme_minimal() + geom_ribbon(aes(ymin = .fittedlo, ymax = .fittedhi, fill = gaBirth), alpha = .3) + ylab('Pr(CST | Site)') + scale_fill_continuous('Gest. age\nat birth') + scale_color_continuous('Gest. age\nat birth') + ylab('Pr(CST)') + xlab('Week of life') + coord_cartesian(ylim = c(0, 1))
+pred_all_plot
+```
+
+### PMA projections
+```{r  cst_PMA_gabirth, fig.width = 8, fig.height = 8, dev = c('png', 'pdf')}
+pred_all_plot + aes(x = PMA)
+```
+
+### Multivariate GAMs, ordered by p-value
+```{r}
+
+mv_all %>% select(-gam, -pred) %>% arrange(`Pr(>F)`)
+```
+
+
+## Single index
+
+```{r}
+si_models = lapply(c('NAS', 'GUT', 'THR'), function(site){
+    mc_dat_melted(site) %>% group_by(variable) %>% do(si_chunk(.)) %>% as_tibble()
+})
+```
+
+```{r si_plot, dev = c('png', 'pdf')}
+si_bind = si_models %>% bind_rows() %>% mutate(variable = factor(variable, levels = levels(pred_all$variable)))
+si_preds = unnest(si_bind, span) %>% mutate(CST = variable)
+si_coefs = si_bind %>% select(variable, si_coef)
+si_coefs = data.frame(CST = si_coefs$variable, do.call(rbind, si_coefs$si_coef)) %>% mutate(CST = reorder(CST, week_of_life))
+ggplot(si_preds, aes(x = week_of_life, y = .fitted.fit, color = gaBirth, group = factor(gaBirth)))+geom_line() + facet_wrap(~CST) + coord_cartesian(ylim = c(0, 1)) + theme_minimal() + geom_ribbon(aes(ymin = .fittedlo, ymax = .fittedhi, fill = gaBirth), alpha =.3)
+```
+
+
+### Write si and mv results
+```{r}
+ si_fits = bind_rows(si_models) %>% select(variable, model) %>%
+  left_join(mv_all %>% select(variable, gam) , by = 'variable') %>%
+  dplyr::rename(model0 = model, model1 = gam)
+saveRDS(si_fits, file = 'si_fits.rds')
+```
+
+## Make multipanel MV plot
+```{r mv_with_si, dev = c('pdf', 'png'), width = 3, height = 2}
+mv_all = left_join(si_coefs, mv_all, by = c(CST = 'variable')) %>% mutate(slope = week_of_life/gaBirth)
+#par(mfrow = c(5, 4))
+#layout(matrix(1:20, nrow = 5, byrow = TRUE))
+mv_all %>% rowwise() %>% do(
+    blah = {
+        plot(.$gam, select = 2, scheme =2, pages = 0, main = .$CST)
+        for(yintercept in seq(0, 500, by = 20)) abline(b = - .$slope, a = yintercept, col = 'black', lty = 2)
+    })
+ggplot(si_coefs, aes(x=week_of_life/gaBirth, y = CST))+geom_point() + scale_x_continuous(trans = 'log2',  breaks = c(.125, .25, .5, 1, 2, 4, 8)) + theme_minimal() + xlab('Ratio of week of life : gest. age') + geom_vline(xintercept = 1, lty = 2) + annotate(y = 'NAS CST 2', x = 3/5, geom = 'text', label = '<-Gestational time', size = 3) +  annotate(y = 'NAS CST 6', x = 2.5, geom = 'text', label = 'Chronological time->', size = 3)
+```

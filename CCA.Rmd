@@ -1,0 +1,279 @@
+---
+title: "Canonical correlation analysis of paired microbiome samples"
+output:
+    html_document:
+        code_folding: hide
+        toc: yes
+        toc_float: yes
+html_notebook: default
+---
+
+## Load libraries
+
+```{r library}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE, autodep=TRUE, message=FALSE, warning=FALSE)
+knitr::opts_chunk$set(cache.path=paste0('CCA_', whoami::username(), '_cache/'))
+library(data.table)
+library(ggplot2)
+library(stringr)
+library(DT)
+library(broom)
+library(tidyverse)
+library(dtplyr)
+library(phyloseq)
+library(biomformat)
+library(ComplexHeatmap)
+library(SummarizedExperiment)
+
+source('src/CCP_pperm.R')
+
+
+
+biom_files = data.table(fname = list.files(path = 'data', pattern = '*.biom', full.names = TRUE))
+biom_files[, site:=str_extract(fname, 'NAS|REC|THR')]
+biom_files[, taxa:=str_extract(fname, 'L[0-9]')]
+
+samp_info = fread('data/OTU Table Summary_2017-05-19_00-48-52.csv')
+names(samp_info) = make.names(names(samp_info))
+```
+
+## load data
+
+Use CGA (binned)
+
+Use CSS normalized files.
+
+```{r load}
+bioms = lapply(biom_files[taxa=='L7', fname], function(x) biom_data(biomformat::read_biom(x)))
+names(bioms) = biom_files[taxa=='L7', site]
+avail_sample = melt(plyr::llply(bioms, colnames)) %>% select(`Sample.Name` = value, `Primary.Type` = L1) %>% data.table()
+
+# Only use samples that are in the biom files
+samp_info_biom = samp_info %>% right_join(avail_sample, by = c("Primary.Type", "Sample.Name")) %>% filter(Visit != 'Illness Visits', !is.na(Rectal.DOL..BLIS.Calculated.))
+not_in = samp_info %>% anti_join(avail_sample)
+```
+
+There are `r nrow(not_in)` samples that were in the BLIS sample table that were not in the biom tables.  These are all sample with $<5000$ counts.
+
+```{r}
+samp_info_biom = samp_info_biom %>% arrange(`Participant.ID`,`Sequence.Num`) %>% mutate(id_seq = as.integer(interaction(`Sequence.Num`, `Participant.ID`)))
+batch_plot = ggplot(samp_info_biom, aes(x=id_seq, y=log10(`Read.Count`), color=`Primary.Type`))+geom_point(size=1, alpha=.5) + geom_smooth() + xlab("Sorted Participant.ID")
+batch_plot
+batch_plot %+% (samp_info_biom %>% filter(Visit=='3M'))
+```
+
+```{r generate_pairs}
+by_id_seq = samp_info_biom[,.(`Primary.Type`, .N, `Read.Count`, `Sample.Name`, Visit, DOL = `Rectal.DOL..BLIS.Calculated.`, CGA = `Rectal.CGA..BLIS.Calculated.`, pairing = paste0(sort(`Primary.Type`), collapse = '.')),by = list(`Participant.ID`, `Sequence.Num`)]
+
+by_id_seq[,Term_weeks:=CGA-DOL/7]
+
+asin_sqrt = function(x) asin(sqrt(x))
+
+# Mapping from sites to pairings
+# Should have the constituent members of each pairing of sites
+sites_sets_map = data.table(s1=c('NAS', 'NAS', 'THR'),
+           s2 = c('THR', 'REC', 'REC'))
+sites_sets_map[,pairing:=str_c(s1, s2, sep='.')]
+sites_sets_map = rbind(sites_sets_map, sites_sets_map[,.(s1=s2, s2=s1, pairing)],
+             data.table(s1=c('NAS', 'REC', 'THR'), pairing=c('NAS', 'REC', 'THR')), fill=TRUE)
+
+generate_pairing = function(set, min_nz = 10, min_pct = .05){
+    if(length(set)==1){
+        this_pairing = sites_sets_map[.(s1 = set), pairing, on = 's1']
+    } else{
+        this_pairing = sites_sets_map[.(s1 = set[1], s2 = set[2]), pairing, on = c('s1', 's2')]
+    }
+    this_pairing = c(this_pairing, 'NAS.REC.THR')
+    
+    nas_rec = by_id_seq[pairing %in% this_pairing & `Primary.Type` %in% set]
+    nas_rec[,matidx:=.GRP,keyby = list(`Participant.ID`, `Sequence.Num`)]
+    mat_set = list()
+    for(m in set){
+        cid = nas_rec[`Primary.Type` == m,`Sample.Name`]
+        assay = bioms[[m]][,cid]
+        oname = rownames(assay)
+        rd = str_split_fixed(rownames(assay), ';', n=7)
+        rd[] = str_replace(rd, '.__', '')
+        rd_abbrev = rd
+        rd_abbrev[] = abbreviate(rd, 12)
+        #empty_row = min(which(colSums(nchar(rd))==0), ncol(rd)+1)
+        empty_row = apply(rd, 1, function(x) min(which(x == '' | x %like% 'Other'), length(x) + 1))
+        sname = make.unique(str_c(rd_abbrev[cbind(1:nrow(rd), empty_row-2)], rd[cbind(1:nrow(rd), empty_row-1)], sep = '.'))
+        rownames(assay) = sname
+        mat_set[[m]] = SummarizedExperiment(assays=asin_sqrt(assay), colData=nas_rec[data.table('Sample.Name' = cid),,on = 'Sample.Name'], rowData=data.table(taxa=rd, sname=sname, original_name=oname))
+        nz = Matrix::rowSums(1*(assay>0))
+        min_nz_pct = ceiling(nrow(assay)*min_pct)
+        min_nz = max(min_nz, min_nz_pct)
+        mat_set[[m]] = mat_set[[m]][nz>min_nz,]
+    }
+    # Check that we have same samples in each list item
+    sapply(mat_set, function(x) stopifnot(all.equal(colData(x)[,c('Participant.ID', 'Sequence.Num')], colData(mat_set[[1]])[,c('Participant.ID', 'Sequence.Num')], check.attributes=FALSE)))
+    mat_set
+
+}
+
+nas = generate_pairing('NAS')
+rec = generate_pairing('REC')
+nas_rec = generate_pairing(c('NAS', 'REC'))
+pairs_ids = combn(c('NAS', 'REC', 'THR'), 2)
+pairs = purrr::map2(as.list(pairs_ids[1,]), as.list(pairs_ids[2,]), ~ generate_pairing(c(.x, .y)))
+```
+
+There are 4 sets of paired matrices we can construct: NAS-REC, NAS-THR, THR-REC and NAS-REC-THR.
+
+```{r}
+getbiom = function(x, sparse = FALSE, frequency = FALSE){
+    m = t(assay(x))
+    if(frequency){
+        s = Matrix::rowSums(m)
+        m  = m/s
+    }
+    if(sparse) return(m)
+    return(as.matrix(m))
+}
+hm1 = Heatmap(getbiom(nas_rec[[1]]), clustering_distance_rows = 'binary', clustering_distance_columns = 'binary', show_row_names=FALSE, show_column_names=FALSE)
+anno = HeatmapAnnotation(colData(nas_rec[[1]])[,c('CGA', 'Term_weeks')], which='row')
+
+hm2 = Heatmap(getbiom(nas_rec[[2]]), clustering_distance_columns = 'binary', show_row_names=FALSE, show_column_names=FALSE)
+              
+hm1 + hm2 + anno
+
+
+```
+Data is super-sparse
+
+## Some EDA
+
+```{r}
+stats = lapply(nas_rec, function(m){
+    mat = getbiom(m)
+    nz = colSums(mat>0)
+    m = colMeans(mat)
+    sd = apply(mat, 2, sd)
+    data.table(nz, m, sd, otu = colnames(mat))
+}) %>% rbindlist(idcol='site')
+
+stats_by = stats %>%  melt(id.vars=c('site', 'otu'))
+stats_rank_max = stats_by  %>% group_by(site, variable) %>% mutate(rank=rank(-value))
+
+stats_value_max = stats_by %>%  group_by(variable, otu) %>% dplyr::summarise(max_value = max(value))
+
+stats_all = stats_by %>% left_join(stats_value_max, by=c('variable', 'otu'))
+
+ggplot(stats_all, aes(x=max_value, y=value, color=site))+geom_point() + facet_wrap(~variable, scale='free')
+
+```
+What is the overlap/distribution of OTU prevalances and variance between sites?
+
+## Correlations of matched OTU
+```{r cor_otu, dev = c('pdf', 'png')}
+pairs_matched_otu = purrr::map(pairs, function(p){
+  common = intersect(rownames(p[[1]]), rownames(p[[2]]))
+  map(p, ~ .x[common,])
+})
+
+otu_cor = purrr::map(pairs_matched_otu, function(p){
+    x = getbiom(p[[1]], frequency = TRUE) %>% fit_lm(data_ = colData(p[[1]]), formula_ = ~ splines::ns(DOL + CGA, 10) + Participant.ID) %>% resid_lm()
+    y = getbiom(p[[2]], frequency = TRUE) %>% fit_lm(data_ = colData(p[[2]]), formula_ = ~ splines::ns(DOL + CGA, 10) + Participant.ID) %>% resid_lm()
+    
+    dc = diag(cor(x, y))
+    data_frame(cor = dc, otu = names(dc))
+})
+
+names(otu_cor)  = str_c(pairs_ids[1,], '-', pairs_ids[2,])
+
+ggplot(melt(otu_cor), aes(y = value, x = L1))+geom_boxplot() + theme_minimal() + ylab("Same OTU correlation")
+```
+
+## Some canonical plots
+
+```{r}
+
+```
+
+## Canonical correlation analysis (CCA)
+
+Let $X$ be an $n \times p$ data matrix and $Y$ be an $n \times q$ matrix on samples X OTU for two sites, with $p \leq q$  CCA seeks to find matrices $A$ ($p\times p$) and $B$ ($q \times p$) such that
+$$
+\text{Cov}\left( \left[XA \; YB \right] \right) = \begin{bmatrix}
+I & D\\
+D & I
+\end{bmatrix},
+$$
+where $D$ is a diagonal matrix with its first $p$ entries positive, and remainder 0s.  That is to say $XA$ and $YB$ are each spherical, within, and orthogonal across.
+
+The $A$ and $B$ also satisfy the following variational equation
+$$
+\max_{a_k,b_k} \frac{\text{Cov}^2(a_k^TX, b_k^TY)}{\text{Var}(a_k^TX)\text{Var}(b_k^T Y)} \quad \text{s.t.} \; a_l^T X a_k = b_l^T Y b_k = 0  \, \forall l<k.
+$$
+
+```{r do_cc, fig.width=6, fig.height=6, dev  = c('pdf', 'png')}
+dof_df = expand.grid( dof = sort(c(0, 14, 25)), pair = 1:3) %>% mutate(Dof = str_c('DoF = ', dof))
+
+cv_dof = dof_df %>% group_by_all() %>% do(cv_coord = {
+    env = environment()
+    env$dof = .$dof
+    ## for some reason, spline can't find DOF unless we do this.  something about forcing evaluation.
+    formula_ = if(.$dof>1){
+        as.formula(sprintf('~splines::ns(DOL/7+CGA, %s)', .$dof))}
+    else if(.$dof==1){
+        formula(~DOL)
+        } else{
+            formula(~1)
+        }
+    crossval_cc(pairs[[.$pair]][[1]], pairs[[.$pair]][[2]], formula_ = formula_, center = FALSE, nfolds = 5)
+})
+
+pairs_id_df = as_data_frame(t(pairs_ids)) %>% dplyr::rename(site1 = V1, site2 = V2)  %>% rowid_to_column(var = 'pair')
+cv_dof_flat = cv_dof  %>%unnest() %>% filter(coordinate < 10, metric == 'cor') %>% left_join(pairs_id_df)
+
+
+ggplot(cv_dof_flat, aes(x = coordinate, y = mean, color = sample, fill = sample))+geom_point() + geom_ribbon(aes(ymin = mean - 2*sd, ymax = mean + 2*sd), alpha = .4) + theme_minimal() + facet_grid(Dof ~ site1+site2) + geom_hline(yintercept = 0, lty = 2) + scale_x_continuous(breaks = c(1, 5, 10)) + ylab("Canonical corr. coef.") + theme(legend.position = 'bottom') + coord_cartesian(ylim=c(-.2, 1)) + scale_y_continuous(breaks = c(0, .5, 1))
+
+
+```
+
+Removing Participant ID is like random effects model.
+
+1. For NAS/REC, NAS/THR, REC/THR
+2. Find reduced model
+3. Do CCA CV (and pick number of coordinates)
+4. Show canonical coordinates
+
+```{r full_cc}
+full_dof = cv_dof = dof_df %>% group_by_all() %>% do(cv_coord = {
+    env = environment()
+    env$dof = .$dof
+    ## for some reason, spline can't find DOF unless we do this.  something about forcing evaluation.
+    formula_ = if(.$dof>1){
+        as.formula(sprintf('~splines::ns(DOL, %s)', .$dof))}
+    else if(.$dof==1){
+        formula(~DOL)
+        } else{
+            formula(~1)
+        }
+    do_cc(pairs[[.$pair]][[1]], pairs[[.$pair]][[2]], formula_ = formula_, center = FALSE)
+})
+
+
+```
+
+
+
+```{r cc_loadings, fig.width = 12, fig.height = 8}
+cc_scores = full_dof %>% rowwise() %>% mutate(scores = {
+    mx = melt(cv_coord$xcoef[,1:3], variable.factor = FALSE) %>% mutate(var = 'x')
+    my = melt(cv_coord$ycoef[,1:3], variable.factor = FALSE)  %>% mutate(var = 'y')
+    list(rbind(mx, my))
+}) %>% select(-cv_coord) %>% unnest()
+max_val = cc_scores %>% group_by(dof, pair, Var1, var) %>% summarize(max_val = max(abs(value))) %>% group_by(dof, pair, var) %>% mutate(rank_max = rank(-max_val)) %>% filter(rank_max < 20)
+
+cc_scores = left_join(max_val, cc_scores) %>% filter(dof == 14)
+
+
+
+ggplot(cc_scores, aes(x=reorder(Var1, value, min), y=value, color=var, label = Var2)) + geom_text() + facet_wrap(~pair, scales='free') + coord_flip() + theme_minimal()
+
+```
+Coordinates
+

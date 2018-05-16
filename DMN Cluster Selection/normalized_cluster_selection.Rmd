@@ -1,0 +1,71 @@
+---
+title: "normalized_cluster_selection"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+#Load packages
+library(DirichletMultinomial)
+library(lattice)
+library(xtable)
+library(parallel)
+
+#Set the constants
+workDir <- "/scratch/grc_group/microbiome/12-0012_substudy2/updated_aim1a_analysis_workspace/good_tables/resp_stage_analysis_workspace/rigor_analysis" #Directory for input and output
+site <- "rec" #Body site
+maxClust <- 10 #Maximum number of clusters to try
+numTrials <- 10 #Number of sub-sampling trials
+sampleFrac <- 0.8 #Proportion of data sub-sampled
+
+#Read in filtered and normalized count table
+count <- t(as.matrix(read.csv(paste(workDir, sprintf("%s_input_table.csv", site), sep = "/"), row.names=1)))
+
+#Sub-sample and fit the dmn model numTrials times using sampleFrac of the data, testing 1 through maxClust clusters and storing the Laplace measures of fit
+lplc_table <- data.frame(matrix(ncol = numTrials, nrow = maxClust))
+for(i in 1:numTrials) {
+  sub_count <- count[sample(nrow(count), nrow(count)*sampleFrac), ]
+  sub_fit <- mclapply(1:maxClust, dmn, count=sub_count, verbose=TRUE, seed=11)
+  lplc_table[i] <- sapply(sub_fit, laplace)
+}
+
+#Initialize the table that will contain normalized lplc values and get the offsets by which to normalize
+norm_lplc_table <- lplc_table
+offsets <- colMeans(lplc_table)
+
+#Subtract the mean of each trial from itself
+for (j in 1:numTrials) {
+  norm_lplc_table[,j] <- lplc_table[,j] - offsets[j]
+}
+
+#Get the mean and std dev of the fits for each cluster
+std_devs <- apply(norm_lplc_table, 1, sd)
+avg_lplc <- rowMeans(norm_lplc_table)
+
+#Determine the cluster with the best fit and set one standard deviation worse than that as the acceptable maximum Laplace value
+min_lplc <- which.min(avg_lplc)
+ceil_lplc <- avg_lplc[min_lplc] + std_devs[min_lplc]
+
+#Pick the smallest number of clusters with acceptable goodness of fit
+for(k in 1:maxClust) {
+  if (avg_lplc[k] < ceil_lplc) {
+    adj_best_index <- k
+    break
+  }
+}
+
+#Fit the dmn model with all the data, select the number of clusters determined above, and write the mixture weights to a file.
+fit <- mclapply(1:adj_best_index, dmn, count=count, verbose=TRUE, seed=11)
+adj_best <- fit[[adj_best_index]]
+write.csv(mixture(adj_best), file = paste(workDir, sprintf("%s_mix_weights.csv", site), sep = "/"))
+
+#Save the best fit
+save(adj_best, file = paste(workDir, sprintf("%s_adj_best.rda", site), sep = "/"))
+
+#Write the table of Laplace values to a file
+write.csv(lplc_table, file = paste(workDir, sprintf("%s_laplace_table.csv", site), sep = "/"))
+```

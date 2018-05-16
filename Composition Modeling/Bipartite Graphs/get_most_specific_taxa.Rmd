@@ -1,0 +1,118 @@
+---
+title: "get_most_specific_taxa"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+#Load packages
+library("stringr")
+
+#Specify directory where files will be read from and written to
+workDir <- "~/Desktop/MiSeq_Projects/12.00012_Microbiome_Master/Substudy_2_1a/analysis/stage_analysis_workspace/rigor_analysis/composition_modeling_data/workspace/bipartite_graph_workspace" 
+
+#Read in a csv with three columns; one list of all significant taxa for each body site, with the column header indicating the body site (NAS, REC, THR)
+sig_orig_names <- read_csv(paste(workDir, "sig_orig_names.csv", sep = "/"))
+
+#List of the body sites
+sites <- c("NAS", "REC", "THR")
+
+#Loop through the body sites
+for (site in sites) {
+
+  #Extract the list for a given body site and remove NA's
+  orig_list <- sig_orig_names[[site]][!is.na(sig_orig_names[[site]])]
+  
+  #Initialize the lists that will be used to store the taxa from each level
+  all.l2 = list()
+  all.l3 = list()
+  all.l4 = list()
+  all.l5 = list()
+  all.l6 = list()
+  all.l7 = list()
+  
+  #Loop through all the taxa in the original list
+  for (taxon in orig_list) {
+    
+    #Put each taxon in the appropriate level specific-list based on occurances of the level separator "|"
+    if(str_count(taxon, "\\|") == 1) {
+      all.l2 <- c(all.l2, taxon)
+    } else if (str_count(taxon, "\\|") == 2) {
+      all.l3 <- c(all.l3, taxon)
+    } else if (str_count(taxon, "\\|") == 3) {
+      all.l4 <- c(all.l4, taxon)
+    } else if (str_count(taxon, "\\|") == 4) {
+      all.l5 <- c(all.l5, taxon)
+    } else if (str_count(taxon, "\\|") == 5) {
+      all.l6 <- c(all.l6, taxon)
+    } else {
+      all.l7 <- c(all.l7, taxon)
+    }
+    
+  }
+  
+  #Make a list containing each of the level-specific lists
+  levels <- list(all.l2, all.l3, all.l4, all.l5, all.l6, all.l7)
+  
+  #Initialize the list that will contain the result: all the most taxonomically specific signficant results
+  select_sig = list()
+  
+  #Loop through the list of level-specific lists
+  for (i in 1:length(levels)) {
+    
+    #If the level specific list is empty, move on to the next one
+    if (length(levels[[i]]) == 0) {next}
+    
+    #If it's L7
+    if (i == 6) {
+      #Put everything into the list of results (because there can't be anything more taxonomically specific)
+      select_sig <- c(select_sig, all.l7)
+      #Break out of the loop because the next section will fail if we're at L7
+      break
+      
+      }
+    
+    #Pull out all the taxa on the current level list
+    this_level <- levels[[i]]
+    #Pull out all the taxa on the next (more specific) level list
+    next_level <- levels[[i+1]]
+    
+    #Loop through all the taxa at this level
+    for (this_taxon in this_level) {
+      #Assume the taxon is significant and most specific
+      sig <- TRUE
+      
+      #Loop through all the taxa at the next (more specific) level
+      for (next_taxon in next_level) {
+        #Check if any of the more specific taxa are in the clade defined by the less specific taxon
+        if (startsWith(next_taxon, this_taxon)) {
+          #If one is found, the less specific taxon doesn't make the results list.
+          sig <- FALSE
+          #Stop looking.
+          break
+          
+        }
+        
+      }
+      
+      #If no more specific taxa matching the current taxon were found
+      if (sig) {
+        #Add the current taxon to the results list.
+        select_sig <- c(select_sig, this_taxon)
+        
+      }
+      
+    }
+    
+  }
+  
+  #Write the list of most specific results for the given body site
+  write(as.character(select_sig), paste(workDir, sprintf("most_specific_%s_sig_taxa.txt", site), sep = "/"), sep="\n")
+  
+}
+
+```
