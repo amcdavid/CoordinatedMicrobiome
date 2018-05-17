@@ -31,6 +31,7 @@ constCols <- c("gaBirth", "ModeOfDelivery", "ns(DOL, 14)")
 thrWts <- c("THR_CST_1", "THR_CST_2", "THR_CST_4", "THR_CST_5", "THR_CST_6") #Base case is CST 3
 nasWts <- c("NAS_CST_1", "NAS_CST_2", "NAS_CST_4", "NAS_CST_5", "NAS_CST_6", "NAS_CST_7") #Base case is CST 3
 recWts <- c("REC_CST_1", "REC_CST_2", "REC_CST_4", "REC_CST_5", "REC_CST_6") #Base case is CST 3
+dataDir = '../data'
 workDir <- "./"##~/Desktop/MiSeq_Projects/12.00012_Microbiome_Master/Substudy_2_1a/analysis/stage_analysis_workspace/rigor_analysis/composition_modeling_data/workspace" #Directory where files will be read from and written to
 minSampFrac <- 0.05 #Minimum fraction of samples in which an OTUs abundance must be non-zero in order to be included
 
@@ -65,9 +66,9 @@ for (site in bodySites) {
     for (tax in taxLevels) {
       
       #Load table and mapping file and make sure column names are okay
-      raw_otu_table <- read_tsv(paste(workDir, sprintf("%s_%s.txt", site, tax), sep = "/"))
+      raw_otu_table <- read_tsv(file.path(dataDir, sprintf("%s_%s.txt", site, tax)))
       colnames(raw_otu_table) <- make.names(colnames(raw_otu_table), unique = TRUE)
-      mapping <- read_tsv(paste(workDir, sprintf("%s_Mapping.txt", site), sep = "/"))
+      mapping <- read_tsv(file.path(dataDir, sprintf("%s_Mapping.txt", site)))
       colnames(mapping) <- make.names(colnames(mapping), unique = TRUE)
       
       #Merge the mapping and OTU info
