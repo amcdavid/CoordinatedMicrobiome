@@ -25,7 +25,7 @@ library(MuMIn)
 #Hard coded constants
 bodySites <- c("THR", "NAS", "REC")
 taxLevels <- c("L2", "L3", "L4", "L5", "L6", "L7")
-constCols <- c("gaBirth", "ModeOfDelivery", "ns(DOL, 14)")
+constCols <- c("gaBirth", "ModeOfDelivery", "ns(DOL, 14)", 'Birth.Season')
 
 ## Todo: use sum-to-zero contrasts
 thrWts <- c("THR_CST_1", "THR_CST_2", "THR_CST_4", "THR_CST_5", "THR_CST_6") #Base case is CST 3
@@ -70,6 +70,9 @@ for (site in bodySites) {
       raw_otu_table <- read_tsv(file.path(dataDir, sprintf("%s_%s.txt", site, tax)))
       colnames(raw_otu_table) <- make.names(colnames(raw_otu_table), unique = TRUE)
       mapping <- read_tsv(file.path(derivedDir, sprintf("%s_Mapping.txt", site)))
+      extra <- read_csv(file.path(dataDir, 'Demographics_2018-06-15_08-23-55.csv'))[,c('Participant ID', 'Birth Season')] 
+      mapping <- merge(mapping, extra, all.x = TRUE, all.y = FALSE, by.x = 'ParticipantId', by.y = 'Participant ID')
+      stopifnot(all(!is.na(mapping$`Birth Season`)))
       colnames(mapping) <- make.names(colnames(mapping), unique = TRUE)
       
       #Merge the mapping and OTU info
@@ -132,7 +135,8 @@ for (site in bodySites) {
         #rsq[otu_i] = andrew_rsq(empty_fits[[otu_i]], null_fits[[otu_i]], full_fits[[otu_i]])
         rsq[otu_i] = nakagawa_rsq(empty_fits[[otu_i]], null_fits[[otu_i]], full_fits[[otu_i]])
          #browser(expr=otu_ids[otu_i] == 'k__Bacteria.p__Actinobacteria.c__Actinobacteria.o__Actinomycetales.f__Corynebacteriaceae.g__Corynebacterium.s__')
-      }
+        
+        }
       
       
       
