@@ -16,7 +16,7 @@ library(xtable)
 library(parallel)
 
 #Set the constants
-workDir <- "/scratch/grc_group/microbiome/12-0012_substudy2/updated_aim1a_analysis_workspace/good_tables/resp_stage_analysis_workspace/rigor_analysis" #Directory for input and output
+workDir <- "./" #Directory for input and output
 site <- "rec" #Body site
 maxClust <- 10 #Maximum number of clusters to try
 numTrials <- 10 #Number of sub-sampling trials
