@@ -37,6 +37,7 @@ WRITE_FILES = FALSE
 knitr::opts_chunk$set(cache.path=paste0('metacommunity_post_analysis_', whoami::username(), '_cache/'))
 ```
 
+
 ```{r}
 comp_res_files = list.files('Composition Modeling/Model p- and R-squared values/', pattern = '.*L[3-7].*.csv', full.names = TRUE)
 
@@ -75,17 +76,75 @@ cowplot::plot_grid(plotlist = site_plots, labels = names(site_plots), nrow = 3)
 ```{r abundance, fig.height= 8, fig.width = 8}
 Sites = c('NAS', 'THR', 'REC')
 Plts = list()
+#otu_avg_cst_lst = list()
 for(s in Sites){
     otu_avg_cst = read_table2('DMN Cluster Selection/CST_Comp_Table_L6.txt', comment = '#') %>% melt() %>% mutate(site = str_extract(variable, 'NAS|REC|THR')) %>% left_join(print_labels %>% mutate(OTU_ID = str_replace_all(OrigName, fixed('|'), ';'))) %>% rename('Printable Label' = 'print_label')
-    otu_avg_cst = otu_avg_cst %>% group_by(OTU_ID, site) %>% mutate(max_value = var(value)) %>% group_by(site, variable) %>% mutate(site_rank = rank(-max_value)) %>% filter(site == s, site_rank < 30)
-
-    otu_avg_cst = otu_avg_cst %>% mutate(OTU_ID = factor(OTU_ID) %>% forcats::fct_reorder(x = site_rank)) %>% group_by(variable, site) %>% arrange(desc(OTU_ID), .by_group = TRUE) %>% mutate(cum_sum = cumsum(value), lab_pos = lag(cum_sum), line_pos = cum_sum - value/2)
+    otu_avg_cst = otu_avg_cst %>% group_by(OTU_ID, site) %>% mutate(max_value = var(value)) %>% group_by(site, variable) %>% mutate(site_rank = rank(-max_value)) 
+otu_avg_cst_lst = otu_avg_cst
+    otu_avg_cst = otu_avg_cst %>% filter(site == s, site_rank < 30) %>% mutate(OTU_ID = forcats::fct_reorder(factor(OTU_ID), .x = site_rank)) %>% group_by(variable, site) %>% arrange(desc(OTU_ID), .by_group = TRUE) %>% mutate(cum_sum = cumsum(value), lab_pos = lag(cum_sum), line_pos = cum_sum - value/2)
 
     Plts[[s]] = ggplot(otu_avg_cst, aes(x = variable, group = OTU_ID, fill = print_label)) + geom_col(aes(y = value), alpha = .9) + geom_path(aes(y = line_pos, color = print_label)) +geom_text(aes(y = lab_pos, label = print_label), angle = 45, hjust = 0, vjust = 0, size = 2)+ theme_classic()+  scale_color_brewer(type = 'div', palette = 'RdYlGn') + scale_fill_brewer(type = 'div', palette = 'RdYlGn')+  theme(legend.position = 'none', axis.text.x = element_text(angle = 45)) + ylab("Average cummulative abundance") 
 }
 
 cowplot::plot_grid(plotlist = Plts, labels = Sites, ncol = 3)
 
+```
+
+```{r}
+TOP_OTU = 30
+otu_max_val = group_by(otu_avg_cst_lst, OTU_ID) %>% summarize(otu_max_var = min(site_rank)) %>% ungroup() %>% mutate(OrigName = str_replace_all(OTU_ID, fixed(';'), '|'))
+otu_avg_cst_mat = spread(otu_avg_cst_lst %>% ungroup() %>% semi_join(filter(otu_max_val, otu_max_var < TOP_OTU)) %>% select(-max_value, -site_rank, -site), key = variable, value = value)
+mat_cst = otu_avg_cst_mat %>% select(contains('CST')) %>% scale_it %>% as.data.frame()
+mat_nas = mat_cst %>% select(contains('NAS')) #%>% scale_it
+mat_thr = mat_cst %>% select(contains('THR')) #%>% scale_it
+mat_rec = mat_cst %>% select(contains('REC')) #%>% scale_it
+#rownames(mat_cst) = rownames(mat_nas) = otu_avg_cst_mat$OTU_ID
+rownames(mat_nas) = rownames(mat_thr) = NULL
+rownames(mat_rec) = make.unique(otu_avg_cst_mat$OTU_ID)
+Heatmap(mat_nas) + Heatmap(mat_thr) + Heatmap(mat_rec)
+```
+
+### Make heatmaps of CST
+
+```{r heatmapdmn2}
+heatmapdmn2 = function (count, fitN, taxa_try, transform = sqrt, 
+    lblwidth = 0.2 * nrow(count), col = DirichletMultinomial:::.gradient) 
+{
+    stopifnot(all(rownames(count) == rownames(mixture(fitN)))) 
+    pN <- fitted(fitN, scale = TRUE)
+    taxa = intersect(rownames(pN), taxa_try)
+    message(length(taxa_try) - length(taxa), ' taxa not found.')
+    pN <- pN[taxa, ]
+    cl <- mixture(fitN, assign = TRUE)
+    ncl <- length(unique(cl))
+    nms <- names(cl)
+    grp <- factor(cl, levels = as.character(seq(1, ncl)))
+    idx <- split(nms, grp)
+    mwd <- 0.15 * length(cl)/ncl
+    wd <- c(unlist(Map(c, lapply(idx, length), mwd), use.names = FALSE), 
+        lblwidth)
+    layout(matrix(seq(1, 2 * ncl + 1), nrow = 1), widths = wd)
+    op <- par(no.readonly = TRUE)
+    on.exit(par(op), add = TRUE)
+    par(mar = c(1, 0, 1, 0))
+    for (i in seq_along(idx)) {
+        image(transform(count[idx[[i]], taxa, drop = FALSE]), 
+            col = col, xaxt = "n", yaxt = "n")
+        image(t(transform(pN[, i, drop = FALSE])), col = col, 
+            xaxt = "n", yaxt = "n")
+    }
+    xat <- (seq_len(nrow(pN)) - 1)/(nrow(pN) - 1)
+    axis(4, xat, labels = rownames(pN), las = 1)
+}
+
+
+for(site in c('nas', 'rec', 'thr')){
+    load(sprintf('DMN Cluster Selection/%s_adj_best.rda', site))
+    count = read_csv(sprintf('DMN Cluster Selection/%s_input_table.csv', site))
+    countm = as.matrix(count[,-1]) %>% t()
+    colnames(countm) = count[[1]]
+    heatmapdmn2(countm, adj_best, taxa = otu_avg_cst_mat$OrigName)
+}
 ```
 
 ## Make some "Pseudo-volcano" plots
