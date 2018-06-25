@@ -61,7 +61,6 @@ Load the regression results (joint F-tests), pull out what is regressed on what.
 library(DirichletMultinomial)
 library(tidyr)
 site_plots = list()
-
 for(site in c('nas', 'rec', 'thr')){
     load(sprintf('DMN Cluster Selection/%s_adj_best.rda', site))
     fitted_best = fitted(adj_best) %>% as.data.frame() %>% tibble::rownames_to_column(var = 'OrigName') 
@@ -78,7 +77,7 @@ Sites = c('NAS', 'THR', 'REC')
 Plts = list()
 #otu_avg_cst_lst = list()
 for(s in Sites){
-    otu_avg_cst = read_table2('DMN Cluster Selection/CST_Comp_Table_L6.txt', comment = '#') %>% melt() %>% mutate(site = str_extract(variable, 'NAS|REC|THR')) %>% left_join(print_labels %>% mutate(OTU_ID = str_replace_all(OrigName, fixed('|'), ';'))) %>% rename('Printable Label' = 'print_label')
+    otu_avg_cst = read_table2('DMN Cluster Selection/CST_Comp_Table_L7.txt', comment = '#') %>% melt() %>% mutate(site = str_extract(variable, 'NAS|REC|THR')) %>% left_join(print_labels %>% mutate(OTU_ID = str_replace_all(OrigName, fixed('|'), ';'))) %>% rename('Printable Label' = 'print_label')
     otu_avg_cst = otu_avg_cst %>% group_by(OTU_ID, site) %>% mutate(max_value = var(value)) %>% group_by(site, variable) %>% mutate(site_rank = rank(-max_value)) 
 otu_avg_cst_lst = otu_avg_cst
     otu_avg_cst = otu_avg_cst %>% filter(site == s, site_rank < 30) %>% mutate(OTU_ID = forcats::fct_reorder(factor(OTU_ID), .x = site_rank)) %>% group_by(variable, site) %>% arrange(desc(OTU_ID), .by_group = TRUE) %>% mutate(cum_sum = cumsum(value), lab_pos = lag(cum_sum), line_pos = cum_sum - value/2)
@@ -91,7 +90,8 @@ cowplot::plot_grid(plotlist = Plts, labels = Sites, ncol = 3)
 ```
 
 ```{r}
-TOP_OTU = 30
+TOP_OTU = 60
+scale_it = . %>% t() %>% scale() %>% t()
 otu_max_val = group_by(otu_avg_cst_lst, OTU_ID) %>% summarize(otu_max_var = min(site_rank)) %>% ungroup() %>% mutate(OrigName = str_replace_all(OTU_ID, fixed(';'), '|'))
 otu_avg_cst_mat = spread(otu_avg_cst_lst %>% ungroup() %>% semi_join(filter(otu_max_val, otu_max_var < TOP_OTU)) %>% select(-max_value, -site_rank, -site), key = variable, value = value)
 mat_cst = otu_avg_cst_mat %>% select(contains('CST')) %>% scale_it %>% as.data.frame()
@@ -101,7 +101,8 @@ mat_rec = mat_cst %>% select(contains('REC')) #%>% scale_it
 #rownames(mat_cst) = rownames(mat_nas) = otu_avg_cst_mat$OTU_ID
 rownames(mat_nas) = rownames(mat_thr) = NULL
 rownames(mat_rec) = make.unique(otu_avg_cst_mat$OTU_ID)
-Heatmap(mat_nas) + Heatmap(mat_thr) + Heatmap(mat_rec)
+ramp = circlize::colorRamp2(breaks = seq(-1, 4, by = 1), c = viridis::viridis(6))
+Heatmap(mat_nas, col = ramp) + Heatmap(mat_thr, col = ramp) + Heatmap(mat_rec, col = ramp)
 ```
 
 ### Make heatmaps of CST
@@ -125,7 +126,6 @@ heatmapdmn2 = function (count, fitN, taxa_try, transform = sqrt,
         lblwidth)
     layout(matrix(seq(1, 2 * ncl + 1), nrow = 1), widths = wd)
     op <- par(no.readonly = TRUE)
-    on.exit(par(op), add = TRUE)
     par(mar = c(1, 0, 1, 0))
     for (i in seq_along(idx)) {
         image(transform(count[idx[[i]], taxa, drop = FALSE]), 
@@ -138,12 +138,12 @@ heatmapdmn2 = function (count, fitN, taxa_try, transform = sqrt,
 }
 
 
-for(site in c('nas', 'rec', 'thr')){
+for(site in c('nas', 'thr', 'rec')){
     load(sprintf('DMN Cluster Selection/%s_adj_best.rda', site))
     count = read_csv(sprintf('DMN Cluster Selection/%s_input_table.csv', site))
     countm = as.matrix(count[,-1]) %>% t()
     colnames(countm) = count[[1]]
-    heatmapdmn2(countm, adj_best, taxa = otu_avg_cst_mat$OrigName)
+    heatmapdmn2(countm, adj_best, taxa = otu_avg_cst_mat$OrigName, col = viridis::magma(10))
 }
 ```
 
@@ -178,8 +178,14 @@ bad_count = pairs_beta_pvals[bad,] %>% select(pair2, otu, Predictor) %>% group_b
 min_na_nowarn = function(...){
     suppressWarnings(min(...))
 }
+```
 
-pairs_signed_p = pairs_beta_pvals %>% dcast(Predictor + pair1+pair2 + pairing + otu + level ~ stat) %>% mutate(beta = as.numeric(beta), pval = as.numeric(pval)) %>% group_by(Predictor) %>% filter(Predictor %like% '(REC|NAS|THR)_CST_[0-9]+')   %>% mutate(adj_pval = p.adjust(pval, method = 'fdr'))  %>% mutate(log10_p_signed = sign(beta) *-log10(adj_pval)) %>%  mutate(Predictor = str_extract(Predictor, 'CST_[0-9]')) %>% group_by(pair1, otu) %>% mutate(min_pval_overall = min_na_nowarn(adj_pval, na.rm = TRUE))
+
+```{r}
+pairs_signed_p_all = pairs_beta_pvals %>% dcast(Predictor + pair1+pair2 + pairing + otu + level ~ stat) %>% mutate(beta = as.numeric(beta), pval = as.numeric(pval)) %>% group_by(Predictor)  %>% mutate(adj_pval = p.adjust(pval, method = 'fdr'))  %>% mutate(log10_p_signed = sign(beta) *-log10(adj_pval)) 
+
+
+pairs_signed_p = pairs_signed_p_all  %>% filter(Predictor %like% '(REC|NAS|THR)_CST_[0-9]+') %>%  mutate(Predictor = str_extract(Predictor, 'CST_[0-9]')) %>% group_by(pair1, otu) %>% mutate(min_pval_overall = min_na_nowarn(adj_pval, na.rm = TRUE))
 
 ggplot(pairs_signed_p, aes(x = -log10(pval), y = log10_p_signed)) + geom_point() + facet_grid(pair1 ~ pair2)
 
@@ -187,6 +193,14 @@ ggplot(pairs_signed_p %>% arrange(otu, pair1, pair2) %>% head(200), aes(x = min_
 
 pairs_cst_signed_p = pairs_signed_p  %>% dcast(pair1 +level + otu + min_pval_overall ~ pair2+Predictor, value.var = 'log10_p_signed')
 
+```
+
+```{r between_subj_assoc}
+pairs_signed_month = filter(pairs_signed_p_all, Predictor %in% c('ModeOfDeliveryVaginal_Breech', 'ModeOfDeliveryVaginal_Vertex', 'Birth.SeasonJan-Mar',         'Birth.SeasonJuly-Sep', 'Birth.SeasonOct-Dec', 'gaBirth'))
+
+ggplot(pairs_signed_month, aes(x = beta, y = -log10(adj_pval), color = pair1)) + geom_point() + facet_wrap(~Predictor, scales = 'free') + theme_minimal() + geom_hline(yintercept = 1, lty = 2)
+
+filter(pairs_signed_month, adj_pval < .2)
 ```
 
 ```{r write_pval_table, eval = WRITE_FILES}
@@ -347,16 +361,17 @@ for(site in c('NAS', 'GUT', 'THR')){
    
 }
 
-mv_all = bind_rows(models_etc) %>% as_tibble()
+mv_all = bind_rows(models_etc) %>% as_tibble() %>% mutate(variable = str_replace(variable, 'CST ', ''))
 
 ```
 ### Projections of multivariate models
 ```{r cst_week_gabirth, fig.width = 8, fig.height = 8, dev = c('png', 'pdf')}
+pal = function(x) RColorBrewer::brewer.pal(n = x+2, name = 'Blues')[-1:-2]
 pred_all = unnest(mv_all, pred) %>% mutate(variable = reorder(factor(variable), `Pr(>F)`,  min))
 PMA_at_max = pred_all %>% group_by(variable)  %>% summarize(max_PMA = PMA[which.max(.fitted)]) %>% mutate(max_PMA_rank = rank(max_PMA, ties.method = 'first')) %>% select(-max_PMA)
 pred_all = left_join(pred_all, PMA_at_max) %>% mutate(variable_PMA = reorder(variable, max_PMA_rank, min))
 
-pred_all_plot = ggplot(pred_all, aes(x = week_of_life, y = .fitted, color = gaBirth, group = factor(gaBirth)))+geom_line() + facet_wrap(~variable_PMA, scales = 'free_y') + theme_minimal() + geom_ribbon(aes(ymin = .fittedlo, ymax = .fittedhi, fill = gaBirth), alpha = .3) + ylab('Pr(CST | Site)') + scale_fill_continuous('Gest. age\nat birth') + scale_color_continuous('Gest. age\nat birth') + ylab('Pr(CST)') + xlab('Week of life') + coord_cartesian(ylim = c(0, 1))
+pred_all_plot = ggplot(pred_all, aes(x = week_of_life, y = .fitted, color = factor(gaBirth), group = factor(gaBirth)))+geom_line() + facet_wrap(~site + variable_PMA, scales = 'free_y') + theme_minimal() + geom_ribbon(aes(ymin = .fittedlo, ymax = .fittedhi, fill = factor(gaBirth)), alpha = .4) + ylab('Pr(CST | Site)') + discrete_scale('fill', 'hue', name = 'Gest. age\nat birth', palette = pal)  + discrete_scale('colour', 'hue', name = 'Gest. age\nat birth', palette = pal)  + ylab('Pr(CST)') + xlab('Week of life') + coord_cartesian(ylim = c(0, 1))
 pred_all_plot
 ```
 
@@ -381,7 +396,7 @@ si_models = lapply(c('NAS', 'GUT', 'THR'), function(site){
 ```
 
 ```{r si_plot, dev = c('png', 'pdf')}
-si_bind = si_models %>% bind_rows() %>% mutate(variable = factor(variable, levels = levels(pred_all$variable)))
+si_bind = si_models %>% bind_rows() %>% mutate(variable = str_replace(variable, 'CST ', ''), variable = factor(variable, levels = levels(pred_all$variable_PMA)))
 si_preds = unnest(si_bind, span) %>% mutate(CST = variable)
 si_coefs = si_bind %>% select(variable, si_coef)
 si_coefs = data.frame(CST = si_coefs$variable, do.call(rbind, si_coefs$si_coef)) %>% mutate(CST = reorder(CST, week_of_life))
@@ -407,5 +422,5 @@ mv_all %>% rowwise() %>% do(
         plot(.$gam, select = 2, scheme =2, pages = 0, main = .$CST)
         for(yintercept in seq(0, 500, by = 20)) abline(b = - .$slope, a = yintercept, col = 'black', lty = 2)
     })
-ggplot(si_coefs, aes(x=week_of_life/gaBirth, y = CST))+geom_point() + scale_x_continuous(trans = 'log2',  breaks = c(.125, .25, .5, 1, 2, 4, 8)) + theme_minimal() + xlab('Ratio of week of life : gest. age') + geom_vline(xintercept = 1, lty = 2) + annotate(y = 'NAS CST 2', x = 3/5, geom = 'text', label = '<-Gestational time', size = 3) +  annotate(y = 'NAS CST 6', x = 2.5, geom = 'text', label = 'Chronological time->', size = 3)
+ggplot(si_coefs, aes(x=week_of_life/gaBirth, y = CST))+geom_point() + scale_x_continuous(trans = 'log2',  breaks = c(.125, .25, .5, 1, 2, 4, 8)) + theme_minimal() + xlab('Ratio of week of life : gest. age') + geom_vline(xintercept = 1, lty = 2) + annotate(y = 'NAS 2', x = 3/5, geom = 'text', label = '<-Gestational time', size = 3) +  annotate(y = 'NAS 6', x = 2.5, geom = 'text', label = 'Chronological time->', size = 3)
 ```
