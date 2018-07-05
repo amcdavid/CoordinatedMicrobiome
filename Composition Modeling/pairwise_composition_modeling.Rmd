@@ -25,7 +25,7 @@ library(MuMIn)
 #Hard coded constants
 bodySites <- c("THR", "NAS", "REC")
 taxLevels <- c("L2", "L3", "L4", "L5", "L6", "L7")
-constCols <- c("gaBirth", "ModeOfDelivery", "ns(DOL, 14)", 'Birth.Season')
+constCols <- c("gaBirth", "is_csection", "ns(DOL, 14)", 'Birth.Season')
 
 ## Todo: use sum-to-zero contrasts
 thrWts <- c("THR_CST_1", "THR_CST_2", "THR_CST_4", "THR_CST_5", "THR_CST_6") #Base case is CST 3
@@ -73,6 +73,7 @@ for (site in bodySites) {
       extra <- read_csv(file.path(dataDir, 'Demographics_2018-06-15_08-23-55.csv'))[,c('Participant ID', 'Birth Season')] 
       mapping <- merge(mapping, extra, all.x = TRUE, all.y = FALSE, by.x = 'ParticipantId', by.y = 'Participant ID')
       stopifnot(all(!is.na(mapping$`Birth Season`)))
+      mapping$is_csection = mapping$ModeOfDelivery == 'Caesarean_Section'
       colnames(mapping) <- make.names(colnames(mapping), unique = TRUE)
       
       #Merge the mapping and OTU info
@@ -124,6 +125,8 @@ for (site in bodySites) {
         
         #Fit the null model
         null_fits[[otu_i]] <- lme(as.formula(paste("norm_abnd ~ ", paste(constCols, collapse = " + "), sep = "")), random = ~ 1|ParticipantId, data = working_table, method = "ML")
+        null_fits[[otu_i]]$otu <- otu_ids[otu_i]
+
         
         #Fit the empty model
         empty_fits[[otu_i]] <- lme(norm_abnd ~ 1, random = ~ 1|ParticipantId, data = working_table, method = "ML")
@@ -146,6 +149,9 @@ for (site in bodySites) {
       #Aggregate and write to a file the R-squared, p-, and adjusted p-values for each OTU
       results <- cbind(otu_ids, rsq, pvals, adj_pvals)
       write.csv(results, paste(workDir, sprintf("%s_using_%s_%s_results.csv", site, otherSite, tax), sep = "/"))
+      
+      #Save the fitted null model
+      save(null_fits, file = paste(workDir, sprintf('%s_%s_null_model.rda', site, tax), sep = '/'))
       
       #Save the fitted full model
       save(full_fits, file = paste(workDir, sprintf("%s_using_%s_%s_fitted_models.rda", site, otherSite, tax), sep = "/"))

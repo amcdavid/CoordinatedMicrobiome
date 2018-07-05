@@ -18,6 +18,7 @@ library(nlme)
 library(splines)
 library(stringr)
 library(car)
+library(broom)
 
 #Hard coded constants
 bodySites <- c("THR", "NAS", "REC")
@@ -44,12 +45,26 @@ for (site in bodySites) {
       this_file = file.path(workDir, sprintf("%s_using_%s_%s_fitted_models.rda", site, otherSite, tax))
       load(file = this_file)
       
+      #Load the fitted full models for the given predictor and outcome body sites and given taxonomic level
+      null_file = file.path(workDir, sprintf("%s_%s_null_model.rda", site, tax))
+      load(file = null_file)
+      
+      
       #Initialize the thing to hold the values that will be written as output
+      #This is a Predictor x OTU table, hence the funny looking shape here
       betas_by_otu <- pvals_by_otu <- vector('list', length = length(full_fits) + 1)
-      names(betas_by_otu) <- names(pvals_by_otu)[[1]] <- 'Predictor'
+      names(betas_by_otu)[[1]] <- names(pvals_by_otu)[[1]] <- 'Predictor'
 
       #Set the first row of the output to be the names of the covariates in the model + the derived CST
       betas_by_otu[[1]] <- pvals_by_otu[[1]] <- c(names(summary(full_fits[[1]])$tTable[,"p-value"]), miss_cst[otherSite])
+      
+      # Use broom::tidy for null fits (don't need lht)
+      null_accum = lapply(null_fits, function(this_fit){
+        y = tidy(this_fit, effects = 'fixed')
+        y$otu = this_fit$otu
+        y
+      })
+
       to_test = str_c(' -', paste(present_cst[[otherSite]], collapse = ' -'))
       #Loop through all the models (one for each otu)
       for (otu_i in 1:length(full_fits)) {
@@ -66,12 +81,14 @@ for (site in bodySites) {
       
     out_table_pval = as.data.frame(pvals_by_otu)
     out_table_beta = as.data.frame(betas_by_otu)
+    
       # adjust for multiple testing
       #out_table[,-1] = t(apply(out_table[,-1], 1, p.adjust, method = 'fdr'))
       #Write the output
       write.table(out_table_pval, file.path(workDir, 'Covariate p-values', sprintf("%s_using_%s_%s_pvals.csv", site, otherSite, tax)), sep = ",", row.names = FALSE, col.names = TRUE)
       write.table(out_table_beta, file.path(workDir, 'Betas', sprintf("%s_using_%s_%s_betas.csv", site, otherSite, tax)), sep = ",", row.names = FALSE, col.names = TRUE)
-
+      
+       write.table(do.call(rbind, null_accum), file.path(workDir, 'Null Models', sprintf("%s_%s_coef_pvals.csv", site, tax)), sep = ",", row.names = FALSE, col.names = TRUE)
     }
     
   }
