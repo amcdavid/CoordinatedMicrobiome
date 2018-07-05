@@ -1,0 +1,50 @@
+```{r library}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+library(reshape2)
+library(tidyverse)
+library(DT)
+library(broom)
+library(ComplexHeatmap)
+library(GGally)
+library(ggthemes)
+library(ggrepel)
+library(readxl)
+library(circlize)
+library(forcats)
+knitr::opts_chunk$set(cache.path=paste0('picrust_post_analysis_', whoami::username(), '_cache/'))
+```
+
+```{r}
+picrusts = list.files('PICRUSt CST Comparison Results/', full.names = TRUE, recursive = TRUE, pattern = '*.xlsx') %>% data_frame(fname = .)  %>% crossing(CST = 1:7) %>% mutate(site = str_extract(fname, 'REC|THR|NAS')) 
+get_sheet_maybe = possibly(~suppressWarnings(read_xlsx(.x, sheet = .y, col_types = c('text', 'numeric', 'numeric', 'numeric', 'numeric'))), data_frame())
+picrusts_sheet = picrusts %>% rowwise() %>% mutate(xls = list(get_sheet_maybe(fname, CST))) %>% unnest() %>% mutate(level = str_count(Feature, fixed('.'))+1) %>% mutate(fdr = p.adjust(`p-value`, 'fdr'), effect = -sign(EnrichedClass*2-1)*LDA_EffectSize)
+
+## str_extract(Feature, '\\.[^.]+$') 
+## str_extract(Feature, '$[^.]+\\.[^.]+\\.([^.]+)', '\\1')
+picrusts_plot = filter(picrusts_sheet, level == 3, !is.na(LDA_EffectSize), !str_detect(Feature, '^Unclassified')) %>% group_by(site, CST) %>% mutate(rank_effect = rank(fdr)) %>% ungroup() %>% mutate(print_label = str_replace(Feature, '^[^.]+\\.', '') %>% str_replace_all(fixed('_'), ' ') %>% str_replace_all(fixed('.'), ':') %>% str_squish())
+functions = filter(picrusts_plot, rank_effect < 9) %>% select(Feature) %>% unique()
+picrusts_plot = picrusts_plot %>% semi_join(functions)
+```
+
+```{r picrust_heatmap, fig.width = 8, fig.height=12, dev = 'pdf'}
+picrust_mat = dcast(picrusts_plot, Feature+print_label ~ site + CST, value.var = 'effect', fill = 0)
+mat = picrust_mat[,-1:-2]
+rownames(mat) = picrust_mat[,2]
+ramp = circlize::colorRamp2(breaks = c(-4, 0, 4), c = c('gold', 'black', 'mediumorchid1'))
+
+Heatmap(mat, col = ramp, row_names_gp = gpar(fontsize = 5), name = 'Enrichment\nscore')
+#h_all = recordPlot()
+#dev.off()
+```
+
+```{r picrust_siteheat, dev = 'pdf', fig.width = 4, fig.height=12}
+drop_zero = function(m){
+    m[rowSums(m!=0)>0,]
+}
+Heatmap(mat[,1:7] %>% drop_zero, col = ramp, row_names_gp = gpar(fontsize = 5), name = 'Enrichment\nscore')
+
+Heatmap(mat[,8:13] %>% drop_zero, col = ramp, row_names_gp = gpar(fontsize = 5), name = 'Enrichment\nscore')
+
+Heatmap(mat[,14:19] %>% drop_zero, col = ramp, row_names_gp = gpar(fontsize = 5), name = 'Enrichment\nscore') 
+
+```
