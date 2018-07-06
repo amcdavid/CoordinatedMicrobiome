@@ -215,38 +215,14 @@ min_na_nowarn = function(...){
 ```{r}
 pairs_signed_p_all = pairs_beta_pvals %>% dcast(Predictor + pair1+pair2 + pairing + otu + level ~ stat) %>% mutate(beta = as.numeric(beta), pval = as.numeric(pval)) %>% group_by(Predictor)  %>% mutate(adj_pval = p.adjust(pval, method = 'fdr'))  %>% mutate(log10_p_signed = sign(beta) *-log10(adj_pval)) 
 
-
 pairs_signed_p = pairs_signed_p_all  %>% filter(Predictor %like% '(REC|NAS|THR)_CST_[0-9]+') %>%  mutate(Predictor = str_extract(Predictor, 'CST_[0-9]')) %>% group_by(pair1, otu) %>% mutate(min_pval_overall = min_na_nowarn(adj_pval, na.rm = TRUE))
-
-ggplot(pairs_signed_p, aes(x = -log10(pval), y = log10_p_signed)) + geom_point() + facet_grid(pair1 ~ pair2)
-
-ggplot(pairs_signed_p %>% arrange(otu, pair1, pair2) %>% head(200), aes(x = min_pval_overall, y = adj_pval, color = pair1)) + facet_wrap(~otu)  + geom_point() + scale_x_log10() + scale_y_log10() + geom_abline(slope = 1, intercept = 0)
 
 pairs_cst_signed_p = pairs_signed_p  %>% dcast(pair1 +level + otu + min_pval_overall ~ pair2+Predictor, value.var = 'log10_p_signed')
 
 ```
 
-```{r between_subj_assoc}
-null_assoc = list.files('Composition Modeling/Null Models/', full.names = TRUE) %>% data_frame(fname = .) %>% mutate(site = str_extract(fname, 'NAS|REC|THR'), level = str_extract(fname, 'L[2-7]')) %>% rowwise() %>% mutate(assoc = list(read_csv(fname))) %>% unnest() %>% group_by(term) %>% mutate(adj_pval = p.adjust(p.value, method = 'fdr'))
-
-pairs_signed_month = filter(null_assoc, term %in% c('is_csectionTRUE', 'Birth.SeasonJan-Mar',         'Birth.SeasonJuly-Sep', 'Birth.SeasonOct-Dec', 'gaBirth')) %>% left_join(print_labels, by = c(otu = 'otu_ids')) %>% mutate(`Printable Label` = ifelse(is.na(`Printable Label`), abbreviate(otu, 20), `Printable Label`))
-
-ggplot(pairs_signed_month, aes(x = estimate, y = -log10(adj_pval), color = site)) + geom_point() + facet_wrap(~term, scales = 'free') + theme_minimal() + geom_hline(yintercept = 1, lty = 2) + ylab('-log10(FDR)') #+ geom_text(data = filter(pairs_signed_month, adj_pval < .1), aes(label = `Printable Label`))
-
-pairs_signed_month_sig = filter(pairs_signed_month, adj_pval < .2)
-write_csv(pairs_signed_month %>% select(site:adj_pval), 'metacommunity_post_analysis_files/supp_table_OTU_associations.csv')
-```
-
 ```{r write_pval_table, eval = WRITE_FILES}
 readr::write_csv(pairs_cst_signed_p, path = 'metacommunity_post_analysis_files/pairs_cst_signed_p.csv')
-
-old = readr::read_csv('metacommunity_post_analysis_files/pairs_cst_signed_p_old.csv')
-
-compare_old = left_join(old %>% select(pair1, otu, min_pval_overall, REC_CST_1, THR_CST_1, NAS_CST_4), pairs_cst_signed_p, by = c('otu', 'pair1'))
-ggplot(compare_old, aes(x=min_pval_overall.x, y=min_pval_overall.y))+ geom_point() + xlab('CST 3 as reference') + ylab('Average CST as reference')
-ggplot(compare_old, aes(x=REC_CST_1.x, y=REC_CST_1.y))+ geom_point() + xlab('CST 3 as reference') + ylab('Average CST as reference')
-ggplot(compare_old, aes(x=(THR_CST_1.x+THR_CST_1.y)/2, y = THR_CST_1.y - THR_CST_1.x))+ geom_point() + xlab('CST 3 as reference') + ylab('Average CST as reference')
-
 ```
 
 ```{r write_otu_crosswalk, eval = WRITE_FILES}
@@ -264,26 +240,19 @@ readr::write_csv(otu_crosswalk, path = 'metacommunity_post_analysis_files/otu_pr
 ```
 
 
+```{r between_subj_assoc, dev = c('png', 'pdf')}
+null_assoc = list.files('Composition Modeling/Null Models/', full.names = TRUE) %>% data_frame(fname = .) %>% rowwise() %>% mutate(assoc = list(read_csv(fname))) %>% unnest() %>% group_by(term) %>% mutate(adj_pval = p.adjust(p.value, method = 'fdr')) %>% ungroup() %>% mutate(fname = str_replace_all(fname, 'REC', 'GUT'), site = str_extract(fname, 'NAS|GUT|THR'), level = str_extract(fname, 'L[2-7]'))
 
-```{r cst_otu_heat}
-make_matrix = function(df){
-    m = as.matrix(df[,-1:-3])
-    allna = colSums(is.na(m)) == nrow(m)
-    m = m[,!allna]
-    m[is.na(m)] = 0
-    rownames(m) = df[[2]]
-    m
-}
+pairs_signed_month = filter(null_assoc, term %in% c('is_csectionTRUE', 'Birth.SeasonJan-Mar',         'Birth.SeasonJuly-Sep', 'Birth.SeasonOct-Dec', 'gaBirth')) %>% left_join(print_labels, by = c(otu = 'otu_ids')) %>% mutate(`Printable Label` = ifelse(is.na(`Printable Label`), abbreviate(otu, 20), `Printable Label`))
 
-pairs_matrix = pairs_cst_signed_p %>% filter(min_pval_overall < .1) %>% select(-min_pval_overall) %>% group_by(pair1) %>% do(pair_mat = .%>% make_matrix)
+ggplot(pairs_signed_month, aes(x = estimate, y = -log10(adj_pval), color = site)) + geom_point() + facet_wrap(~term, scales = 'free') + theme_minimal() + geom_hline(yintercept = 1, lty = 2) + ylab('-log10(FDR)') + scale_color_ptol() #+ geom_text(data = filter(pairs_signed_month, adj_pval < .1), aes(label = `Printable Label`))
 
-pairs_matrix %>% group_by(pair1) %>% do({
-    hm = Heatmap(.[[1,2]], row_names_gp = gpar(cex = .25), col = colorRamp2(c(-4, 0, 4), c('green', 'white', 'red')), name = .[[1,1]])
-    print(hm)
-    .
-})
-
+pairs_signed_month_sig = filter(pairs_signed_month, adj_pval < .2)
+write_csv(pairs_signed_month %>% select(site:adj_pval), 'metacommunity_post_analysis_files/supp_table_OTU_associations.csv')
 ```
+
+
+
 
 ```{r load_metacommunities}
 ## Files are named with "REC"
