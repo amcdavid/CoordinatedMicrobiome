@@ -77,7 +77,7 @@ Sites = c('NAS', 'THR', 'REC')
 Plts = list()
 #otu_avg_cst_lst = list()
 for(s in Sites){
-    otu_avg_cst = read_table2('DMN Cluster Selection/CST_Comp_Table_L7.txt', comment = '#') %>% melt() %>% mutate(site = str_extract(variable, 'NAS|REC|THR')) %>% left_join(print_labels %>% mutate(OTU_ID = str_replace_all(OrigName, fixed('|'), ';'))) %>% rename('Printable Label' = 'print_label')
+    otu_avg_cst = read_table2('DMN Cluster Selection/CST_Comp_Table_L6.txt', comment = '#') %>% melt() %>% mutate(site = str_extract(variable, 'NAS|REC|THR')) %>% left_join(print_labels %>% mutate(OTU_ID = str_replace_all(OrigName, fixed('|'), ';'))) %>% mutate(print_label = ifelse(is.na(`Printable Label`), OTU_ID, `Printable Label`))
     otu_avg_cst = otu_avg_cst %>% group_by(OTU_ID, site) %>% mutate(max_value = var(value)) %>% group_by(site, variable) %>% mutate(site_rank = rank(-max_value)) 
 otu_avg_cst_lst = otu_avg_cst
     otu_avg_cst = otu_avg_cst %>% filter(site == s, site_rank < 30) %>% mutate(OTU_ID = forcats::fct_reorder(factor(OTU_ID), .x = site_rank)) %>% group_by(variable, site) %>% arrange(desc(OTU_ID), .by_group = TRUE) %>% mutate(cum_sum = cumsum(value), lab_pos = lag(cum_sum), line_pos = cum_sum - value/2)
@@ -100,14 +100,14 @@ mat_thr = mat_cst %>% select(contains('THR')) #%>% scale_it
 mat_rec = mat_cst %>% select(contains('REC')) #%>% scale_it
 #rownames(mat_cst) = rownames(mat_nas) = otu_avg_cst_mat$OTU_ID
 rownames(mat_nas) = rownames(mat_thr) = NULL
-rownames(mat_rec) = make.unique(otu_avg_cst_mat$OTU_ID)
+rownames(mat_rec) = make.unique(otu_avg_cst_mat$print_label)
 ramp = circlize::colorRamp2(breaks = seq(-1, 4, by = 1), c = viridis::viridis(6))
 Heatmap(mat_nas, col = ramp) + Heatmap(mat_thr, col = ramp) + Heatmap(mat_rec, col = ramp)
 ```
 
 ### Make heatmaps of CST
 
-```{r heatmapdmn2}
+```{r heatmapdmn2, eval = FALSE}
 heatmapdmn2 = function (count, fitN, taxa_try, transform = sqrt, 
     lblwidth = 0.2 * nrow(count), col = DirichletMultinomial:::.gradient) 
 {
@@ -138,12 +138,43 @@ heatmapdmn2 = function (count, fitN, taxa_try, transform = sqrt,
 }
 
 
+heatmapdmn3 = function (count, fitN, cl_summary, taxa_try, transform = sqrt, 
+    lblwidth = 0.2 * nrow(count), col = DirichletMultinomial:::.gradient) 
+{
+    stopifnot(all(rownames(count) == rownames(cl_summary)))
+    
+    taxa = intersect(rownames(cl_summary), taxa_try)
+    message(length(taxa_try) - length(taxa), ' taxa not found.')
+    cl_summary <- cl_summary[taxa, ]
+    cl <- mixture(fitN, assign = TRUE)
+    ncl <- length(unique(cl))
+    nms <- names(cl)
+    grp <- factor(cl, levels = as.character(seq(1, ncl)))
+    idx <- split(nms, grp)
+    mwd <- 0.15 * length(cl)/ncl
+    wd <- c(unlist(Map(c, lapply(idx, length), mwd), use.names = FALSE), 
+        lblwidth)
+    layout(matrix(seq(1, 2 * ncl + 1), nrow = 1), widths = wd)
+    op <- par(no.readonly = TRUE)
+    par(mar = c(1, 0, 1, 0))
+    for (i in seq_along(idx)) {
+        image(transform(count[idx[[i]], taxa, drop = FALSE]), 
+            col = col, xaxt = "n", yaxt = "n")
+        image(t(transform(cl_summary[, i, drop = FALSE])), col = col, 
+            xaxt = "n", yaxt = "n")
+    }
+    xat <- (seq_len(nrow(cl_summary)) - 1)/(nrow(cl_summary) - 1)
+    axis(4, xat, labels = rownames(cl_summary), las = 1)
+}
+
+
+
 for(site in c('nas', 'thr', 'rec')){
     load(sprintf('DMN Cluster Selection/%s_adj_best.rda', site))
     count = read_csv(sprintf('DMN Cluster Selection/%s_input_table.csv', site))
     countm = as.matrix(count[,-1]) %>% t()
     colnames(countm) = count[[1]]
-    heatmapdmn2(countm, adj_best, taxa = otu_avg_cst_mat$OrigName, col = viridis::magma(10))
+    heatmapdmn3(countm, adj_best, mat_rec, taxa = otu_avg_cst_mat$OrigName, col = viridis::magma(10))
 }
 ```
 
@@ -196,11 +227,14 @@ pairs_cst_signed_p = pairs_signed_p  %>% dcast(pair1 +level + otu + min_pval_ove
 ```
 
 ```{r between_subj_assoc}
-pairs_signed_month = filter(pairs_signed_p_all, Predictor %in% c('ModeOfDeliveryVaginal_Breech', 'ModeOfDeliveryVaginal_Vertex', 'Birth.SeasonJan-Mar',         'Birth.SeasonJuly-Sep', 'Birth.SeasonOct-Dec', 'gaBirth'))
+null_assoc = list.files('Composition Modeling/Null Models/', full.names = TRUE) %>% data_frame(fname = .) %>% mutate(site = str_extract(fname, 'NAS|REC|THR'), level = str_extract(fname, 'L[2-7]')) %>% rowwise() %>% mutate(assoc = list(read_csv(fname))) %>% unnest() %>% group_by(term) %>% mutate(adj_pval = p.adjust(p.value, method = 'fdr'))
 
-ggplot(pairs_signed_month, aes(x = beta, y = -log10(adj_pval), color = pair1)) + geom_point() + facet_wrap(~Predictor, scales = 'free') + theme_minimal() + geom_hline(yintercept = 1, lty = 2)
+pairs_signed_month = filter(null_assoc, term %in% c('is_csectionTRUE', 'Birth.SeasonJan-Mar',         'Birth.SeasonJuly-Sep', 'Birth.SeasonOct-Dec', 'gaBirth')) %>% left_join(print_labels, by = c(otu = 'otu_ids')) %>% mutate(`Printable Label` = ifelse(is.na(`Printable Label`), abbreviate(otu, 20), `Printable Label`))
 
-filter(pairs_signed_month, adj_pval < .2)
+ggplot(pairs_signed_month, aes(x = estimate, y = -log10(adj_pval), color = site)) + geom_point() + facet_wrap(~term, scales = 'free') + theme_minimal() + geom_hline(yintercept = 1, lty = 2) + ylab('-log10(FDR)') #+ geom_text(data = filter(pairs_signed_month, adj_pval < .1), aes(label = `Printable Label`))
+
+pairs_signed_month_sig = filter(pairs_signed_month, adj_pval < .2)
+write_csv(pairs_signed_month %>% select(site:adj_pval), 'metacommunity_post_analysis_files/supp_table_OTU_associations.csv')
 ```
 
 ```{r write_pval_table, eval = WRITE_FILES}
