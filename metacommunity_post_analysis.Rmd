@@ -77,7 +77,7 @@ Sites = c('NAS', 'THR', 'REC')
 Plts = list()
 #otu_avg_cst_lst = list()
 for(s in Sites){
-    otu_avg_cst = read_table2('DMN Cluster Selection/CST_Comp_Table_L6.txt', comment = '#') %>% melt() %>% mutate(site = str_extract(variable, 'NAS|REC|THR')) %>% left_join(print_labels %>% mutate(OTU_ID = str_replace_all(OrigName, fixed('|'), ';'))) %>% mutate(print_label = ifelse(is.na(`Printable Label`), OTU_ID, `Printable Label`))
+    otu_avg_cst = read_table2('DMN Cluster Selection/CST_Comp_Table_L7.txt', comment = '#') %>% melt() %>% mutate(site = str_extract(variable, 'NAS|REC|THR')) %>% left_join(print_labels %>% mutate(OTU_ID = str_replace_all(OrigName, fixed('|'), ';'))) %>% mutate(print_label = ifelse(is.na(`Printable Label`), OTU_ID, `Printable Label`))
     otu_avg_cst = otu_avg_cst %>% group_by(OTU_ID, site) %>% mutate(max_value = var(value)) %>% group_by(site, variable) %>% mutate(site_rank = rank(-max_value)) 
 otu_avg_cst_lst = otu_avg_cst
     otu_avg_cst = otu_avg_cst %>% filter(site == s, site_rank < 30) %>% mutate(OTU_ID = forcats::fct_reorder(factor(OTU_ID), .x = site_rank)) %>% group_by(variable, site) %>% arrange(desc(OTU_ID), .by_group = TRUE) %>% mutate(cum_sum = cumsum(value), lab_pos = lag(cum_sum), line_pos = cum_sum - value/2)
@@ -89,32 +89,36 @@ cowplot::plot_grid(plotlist = Plts, labels = Sites, ncol = 3)
 
 ```
 
-```{r}
-TOP_OTU = 60
+```{r dmn_genera_zscores, dev = c('png','pdf'), fig.width = 6, fig.height = 5}
+# TOP_OTU = 60
+TOP_OTU = 40
 scale_it = . %>% t() %>% scale() %>% t()
 otu_max_val = group_by(otu_avg_cst_lst, OTU_ID) %>% summarize(otu_max_var = min(site_rank)) %>% ungroup() %>% mutate(OrigName = str_replace_all(OTU_ID, fixed(';'), '|'))
 otu_avg_cst_mat = spread(otu_avg_cst_lst %>% ungroup() %>% semi_join(filter(otu_max_val, otu_max_var < TOP_OTU)) %>% select(-max_value, -site_rank, -site), key = variable, value = value)
 mat_cst = otu_avg_cst_mat %>% select(contains('CST')) %>% scale_it %>% as.data.frame()
+names(mat_cst) = names(mat_cst) %>% str_replace_all('_CST_', ' ') %>% str_replace('REC', 'GUT')
 mat_nas = mat_cst %>% select(contains('NAS')) #%>% scale_it
 mat_thr = mat_cst %>% select(contains('THR')) #%>% scale_it
-mat_rec = mat_cst %>% select(contains('REC')) #%>% scale_it
+mat_rec = mat_cst %>% select(contains('GUT')) #%>% scale_it
 #rownames(mat_cst) = rownames(mat_nas) = otu_avg_cst_mat$OTU_ID
 rownames(mat_nas) = rownames(mat_thr) = NULL
 rownames(mat_rec) = make.unique(otu_avg_cst_mat$print_label)
 ramp = circlize::colorRamp2(breaks = seq(-1, 4, by = 1), c = viridis::viridis(6))
-Heatmap(mat_nas, col = ramp) + Heatmap(mat_thr, col = ramp) + Heatmap(mat_rec, col = ramp)
+Heatmap(mat_nas, col = ramp, name = 'Genera\nAbundance\n(Z-score)') + Heatmap(mat_thr, col = ramp, show_heatmap_legend = FALSE) + Heatmap(mat_rec, col = ramp, show_heatmap_legend = FALSE)
 ```
+
+Change the chunk above to use L6 to generate the Genera heatmaps.
 
 ### Make heatmaps of CST
 
-```{r heatmapdmn2, eval = FALSE}
+```{r heatmapdmn2, eval = TRUE, dev = c('png', 'pdf'), fig.width = 8, fig.height=11, dpi = 300}
 heatmapdmn2 = function (count, fitN, taxa_try, transform = sqrt, 
-    lblwidth = 0.2 * nrow(count), col = DirichletMultinomial:::.gradient) 
+    lblwidth = 0.2 * nrow(count), col = DirichletMultinomial:::.gradient, lab_row = NULL) 
 {
     stopifnot(all(rownames(count) == rownames(mixture(fitN)))) 
     pN <- fitted(fitN, scale = TRUE)
-    taxa = intersect(rownames(pN), taxa_try)
-    message(length(taxa_try) - length(taxa), ' taxa not found.')
+    taxa = na.omit(match(taxa_try, rownames(pN)))
+    message(length(taxa_try) - length(na.omit(taxa)), ' taxa not found.')
     pN <- pN[taxa, ]
     cl <- mixture(fitN, assign = TRUE)
     ncl <- length(unique(cl))
@@ -129,12 +133,13 @@ heatmapdmn2 = function (count, fitN, taxa_try, transform = sqrt,
     par(mar = c(1, 0, 1, 0))
     for (i in seq_along(idx)) {
         image(transform(count[idx[[i]], taxa, drop = FALSE]), 
-            col = col, xaxt = "n", yaxt = "n")
+            col = col, xaxt = "n", yaxt = "n", useRaster = FALSE)
         image(t(transform(pN[, i, drop = FALSE])), col = col, 
-            xaxt = "n", yaxt = "n")
+            xaxt = "n", yaxt = "n", bg = 'white', fg = 'white', mar = c(1, 2, 1, 2))
     }
     xat <- (seq_len(nrow(pN)) - 1)/(nrow(pN) - 1)
-    axis(4, xat, labels = rownames(pN), las = 1)
+    if(is.null(lab_row)) lab_row =  rownames(pN) else lab_row = lab_row[taxa]
+    axis(4, xat, labels = lab_row, las = 1)
 }
 
 
@@ -159,7 +164,7 @@ heatmapdmn3 = function (count, fitN, cl_summary, taxa_try, transform = sqrt,
     par(mar = c(1, 0, 1, 0))
     for (i in seq_along(idx)) {
         image(transform(count[idx[[i]], taxa, drop = FALSE]), 
-            col = col, xaxt = "n", yaxt = "n")
+            col = col, xaxt = "n", yaxt = "n", bty = 'n', bg = NA, fg = NA, useRaster = FALSE)
         image(t(transform(cl_summary[, i, drop = FALSE])), col = col, 
             xaxt = "n", yaxt = "n")
     }
@@ -168,14 +173,22 @@ heatmapdmn3 = function (count, fitN, cl_summary, taxa_try, transform = sqrt,
 }
 
 
-
+plts = list()
 for(site in c('nas', 'thr', 'rec')){
     load(sprintf('DMN Cluster Selection/%s_adj_best.rda', site))
     count = read_csv(sprintf('DMN Cluster Selection/%s_input_table.csv', site))
+    #prop = read_tsv(sprintf('data/%s_L6.txt', toupper(site)))
+    # countm = as.matrix(prop[,-1])
+    #rownames(countm) = prop$SampleID
     countm = as.matrix(count[,-1]) %>% t()
     colnames(countm) = count[[1]]
-    heatmapdmn3(countm, adj_best, mat_rec, taxa = otu_avg_cst_mat$OrigName, col = viridis::magma(10))
+    lab_row = left_join(data_frame(OrigName = colnames(countm)), otu_avg_cst_mat) %>% mutate(`Printable Label` = ifelse(is.na(`Printable Label`), OrigName, `Printable Label`))
+    heatmapdmn2(countm, adj_best, taxa = otu_avg_cst_mat$OrigName, col = viridis::magma(10), lab_row = lab_row$`Printable Label`, lblwidth = .7*nrow(countm))
+    plts[[site]] = recordPlot()
+    #heatmapdmn3(countm, adj_best, mat_rec, taxa = otu_avg_cst_mat$OrigName, col = viridis::magma(10))
 }
+
+cowplot::plot_grid(plotlist = plts, labels = c('A. Nasal', 'B. Throat', 'C. Gut'), scale = .9)
 ```
 
 ## Make some "Pseudo-volcano" plots
@@ -215,7 +228,7 @@ min_na_nowarn = function(...){
 ```{r}
 pairs_signed_p_all = pairs_beta_pvals %>% dcast(Predictor + pair1+pair2 + pairing + otu + level ~ stat) %>% mutate(beta = as.numeric(beta), pval = as.numeric(pval)) %>% group_by(Predictor)  %>% mutate(adj_pval = p.adjust(pval, method = 'fdr'))  %>% mutate(log10_p_signed = sign(beta) *-log10(adj_pval)) 
 
-pairs_signed_p = pairs_signed_p_all  %>% filter(Predictor %like% '(REC|NAS|THR)_CST_[0-9]+') %>%  mutate(Predictor = str_extract(Predictor, 'CST_[0-9]')) %>% group_by(pair1, otu) %>% mutate(min_pval_overall = min_na_nowarn(adj_pval, na.rm = TRUE))
+pairs_signed_p = pairs_signed_p_all  %>% filter(Predictor %like% '(REC|NAS|THR)_CST_[0-9]+') %>%  ungroup() %>% mutate(Predictor = str_extract(Predictor, 'CST_[0-9]')) %>% group_by(pair1, otu) %>% mutate(min_pval_overall = min_na_nowarn(adj_pval, na.rm = TRUE))
 
 pairs_cst_signed_p = pairs_signed_p  %>% dcast(pair1 +level + otu + min_pval_overall ~ pair2+Predictor, value.var = 'log10_p_signed')
 
@@ -427,3 +440,26 @@ mv_all %>% rowwise() %>% do(
     })
 ggplot(si_coefs, aes(x=week_of_life/gaBirth, y = CST))+geom_point() + scale_x_continuous(trans = 'log2',  breaks = c(.125, .25, .5, 1, 2, 4, 8)) + theme_minimal() + xlab('Ratio of week of life : gest. age') + geom_vline(xintercept = 1, lty = 2) + annotate(y = 'NAS 2', x = 3/5, geom = 'text', label = '<-Gestational time', size = 3) +  annotate(y = 'NAS 6', x = 2.5, geom = 'text', label = 'Chronological time->', size = 3)
 ```
+
+### Categorize SI coefs
+```{r test_for_any_gab, dev = c('png', 'pdf')}
+all_data = list()
+for(site in c('NAS', 'GUT', 'THR')){
+    all_data[[site]] = mc_dat_melted(site) 
+}
+all_data = bind_rows(all_data, .id = 'site')
+
+occurs_in_pid = all_data %>% group_by(ParticipantId, variable, site, gaBirth) %>% summarize(CST_occurs = any(value > .5))
+
+occurs_glm = occurs_in_pid %>% group_by(variable, site) %>% do(glm_res = { tidy(glm(CST_occurs ~ gaBirth, data = .))}) %>% as_data_frame() %>% unnest() %>% filter(term == 'gaBirth') %>% mutate(CST = str_replace(variable, 'CST ', '')) %>% select(-variable, -term)
+```
+```
+
+
+```{r}
+CAT_THRESH = log2(4/2)
+si_coefs  = si_coefs %>% left_join(occurs_glm) %>% mutate(log_ratio = log2(gaBirth/week_of_life), category = case_when(abs(log_ratio) <CAT_THRESH ~ 'convergent', log_ratio < -1 & p.value > .05 ~ 'chronological', TRUE  ~ "ideosyncratic", ))
+knitr::kable(si_coefs)
+write_csv(si_coefs, path = 'metacommunity_post_analysis_files/supp_table_CST_cats.csv')
+```
+
