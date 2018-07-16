@@ -5,6 +5,13 @@ fit_cancor = function(X, Y, xcenter, ycenter){
     cc
 }
 
+# fit_cancor = function(X, Y, xcenter, ycenter){
+#     cc = PMA::CCA(X, Y, xcenter = xcenter, ycenter = ycenter)
+#     cc$Xdat = X
+#     cc$Ydat = Y
+#     cc
+# }
+
 eval_cancor = function(fit, Xnew, Ynew){
     stopifnot(inherits(fit, 'FittedCancor'))
     if(missing(Xnew)){

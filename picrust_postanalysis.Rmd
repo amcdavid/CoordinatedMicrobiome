@@ -24,6 +24,8 @@ picrusts_sheet = picrusts %>% rowwise() %>% mutate(xls = list(get_sheet_maybe(fn
 picrusts_plot = filter(picrusts_sheet, level == 3, !is.na(LDA_EffectSize), !str_detect(Feature, '^Unclassified')) %>% group_by(site, CST) %>% mutate(rank_effect = rank(fdr)) %>% ungroup() %>% mutate(print_label = str_replace(Feature, '^[^.]+\\.', '') %>% str_replace_all(fixed('_'), ' ') %>% str_replace_all(fixed('.'), ':') %>% str_squish())
 functions = filter(picrusts_plot, rank_effect < 9) %>% select(Feature) %>% unique()
 picrusts_plot = picrusts_plot %>% semi_join(functions)
+
+picrusts_plot %>% summarize(max(fdr), min(LDA_EffectSize))
 ```
 
 ```{r picrust_heatmap, fig.width = 8, fig.height=12, dev = 'pdf'}
