@@ -20,6 +20,8 @@ library(DT)
 library(broom)
 library(tidyverse)
 library(dtplyr)
+library(phyloseq)
+library(biomformat)
 library(ComplexHeatmap)
 library(SummarizedExperiment)
 
@@ -27,7 +29,7 @@ source('src/CCP_pperm.R')
 
 
 
-biom_files = data.table(fname = list.files(path = 'data', pattern = '.*_L[2-7].txt', full.names = TRUE))
+biom_files = data.table(fname = list.files(path = 'data', pattern = '*.biom', full.names = TRUE))
 biom_files[, site:=str_extract(fname, 'NAS|REC|THR')]
 biom_files[, taxa:=str_extract(fname, 'L[0-9]')]
 
@@ -39,12 +41,12 @@ names(samp_info) = make.names(names(samp_info))
 
 Use CGA (binned)
 
-Use ? normalized files.
+Use CSS normalized files.
 
 ```{r load}
-bioms = lapply(biom_files[taxa=='L7', fname], function(x) read_tsv(x) %>% rename(SampleID = 'Sample.Name'))
+bioms = lapply(biom_files[taxa=='L7', fname], function(x) biom_data(biomformat::read_biom(x)))
 names(bioms) = biom_files[taxa=='L7', site]
-avail_sample = melt(plyr::llply(bioms, '[[', 'Sample.Name')) %>% select(`Sample.Name` = value, `Primary.Type` = L1) %>% data.table()
+avail_sample = melt(plyr::llply(bioms, colnames)) %>% select(`Sample.Name` = value, `Primary.Type` = L1) %>% data.table()
 
 # Only use samples that are in the biom files
 samp_info_biom = samp_info %>% right_join(avail_sample, by = c("Primary.Type", "Sample.Name")) %>% filter(Visit != 'Illness Visits', !is.na(Rectal.DOL..BLIS.Calculated.))
@@ -87,10 +89,10 @@ generate_pairing = function(set, min_nz = 10, min_pct = .05){
     nas_rec[,matidx:=.GRP,keyby = list(`Participant.ID`, `Sequence.Num`)]
     mat_set = list()
     for(m in set){
-        cid = nas_rec[`Primary.Type` == m, list(Sample.Name)]
-        assay = semi_join(bioms[[m]], cid, by = 'Sample.Name', copy = TRUE) %>% dplyr::select(-Sample.Name) %>% as.matrix() %>% t()
+        cid = nas_rec[`Primary.Type` == m,`Sample.Name`]
+        assay = bioms[[m]][,cid]
         oname = rownames(assay)
-        rd = str_split_fixed(rownames(assay), '[|]', n=7)
+        rd = str_split_fixed(rownames(assay), ';', n=7)
         rd[] = str_replace(rd, '.__', '')
         rd_abbrev = rd
         rd_abbrev[] = abbreviate(rd, 12)
@@ -98,7 +100,7 @@ generate_pairing = function(set, min_nz = 10, min_pct = .05){
         empty_row = apply(rd, 1, function(x) min(which(x == '' | x %like% 'Other'), length(x) + 1))
         sname = make.unique(str_c(rd_abbrev[cbind(1:nrow(rd), empty_row-2)], rd[cbind(1:nrow(rd), empty_row-1)], sep = '.'))
         rownames(assay) = sname
-        mat_set[[m]] = SummarizedExperiment(assays=asin_sqrt(assay), colData=semi_join(nas_rec, cid, by = 'Sample.Name'), rowData=data.table(taxa=rd, sname=sname, original_name=oname))
+        mat_set[[m]] = SummarizedExperiment(assays=asin_sqrt(assay), colData=nas_rec[data.table('Sample.Name' = cid),,on = 'Sample.Name'], rowData=data.table(taxa=rd, sname=sname, original_name=oname))
         nz = Matrix::rowSums(1*(assay>0))
         min_nz_pct = ceiling(nrow(assay)*min_pct)
         min_nz = max(min_nz, min_nz_pct)
@@ -160,29 +162,33 @@ stats_all = stats_by %>% left_join(stats_value_max, by=c('variable', 'otu'))
 
 ggplot(stats_all, aes(x=max_value, y=value, color=site))+geom_point() + facet_wrap(~variable, scale='free')
 
-ggplot(stats_all, aes(x = value, fill = site)) + geom_density(alpha = .5) + facet_wrap(~variable, scale='free')
-
 ```
 What is the overlap/distribution of OTU prevalances and variance between sites?
 
 ## Correlations of matched OTU
 ```{r cor_otu, dev = c('pdf', 'png')}
 pairs_matched_otu = purrr::map(pairs, function(p){
-  common = intersect(rowData(p[[1]])$original_name, rowData(p[[2]])$original_name)
-  map(p, ~ .x[rowData(.x)$original_name %in% common,])
+  common = intersect(rownames(p[[1]]), rownames(p[[2]]))
+  map(p, ~ .x[common,])
 })
 
 otu_cor = purrr::map(pairs_matched_otu, function(p){
-    x = getbiom(p[[1]], frequency = FALSE) %>% fit_lm(data_ = colData(p[[1]]), formula_ = ~ splines::ns(DOL + CGA, 10) + Participant.ID) %>% resid_lm()
-    y = getbiom(p[[2]], frequency = FALSE) %>% fit_lm(data_ = colData(p[[2]]), formula_ = ~ splines::ns(DOL + CGA, 10) + Participant.ID) %>% resid_lm()
+    x = getbiom(p[[1]], frequency = TRUE) %>% fit_lm(data_ = colData(p[[1]]), formula_ = ~ splines::ns(DOL + CGA, 10) + Participant.ID) %>% resid_lm()
+    y = getbiom(p[[2]], frequency = TRUE) %>% fit_lm(data_ = colData(p[[2]]), formula_ = ~ splines::ns(DOL + CGA, 10) + Participant.ID) %>% resid_lm()
     
     dc = diag(cor(x, y))
-    data_frame(cor = dc, otu = colnames(x))
+    data_frame(cor = dc, otu = names(dc))
 })
 
 names(otu_cor)  = str_c(pairs_ids[1,], '-', pairs_ids[2,])
 
 ggplot(melt(otu_cor), aes(y = value, x = L1))+geom_boxplot() + theme_minimal() + ylab("Same OTU correlation")
+```
+
+## Some canonical plots
+
+```{r}
+
 ```
 
 ## Canonical correlation analysis (CCA)
