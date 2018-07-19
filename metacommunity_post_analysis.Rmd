@@ -39,7 +39,7 @@ knitr::opts_chunk$set(cache.path=paste0('metacommunity_post_analysis_', whoami::
 
 
 ```{r}
-comp_res_files = list.files('Composition Modeling/Model p- and R-squared values/', pattern = '.*L[3-7].*.csv', full.names = TRUE)
+comp_res_files = list.files('Composition Modeling/', pattern = '.*L[3-7].*.csv', full.names = TRUE)
 
 print_labels = readxl::read_excel('Composition Modeling/Bipartite Graphs/PrintableLabels.xlsx') %>% mutate(otu_ids = str_replace_all(OrigName, '\\|', '.'))
 load_paired_associations = function(list_of_files, fill = FALSE){

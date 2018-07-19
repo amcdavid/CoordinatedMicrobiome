@@ -26,8 +26,10 @@ taxLevels <- c("L2", "L3", "L4", "L5", "L6", "L7")
 #relative to the path of this script
 workDir = './'
 
-if(!dir.exists(file.path(workDir, 'Covariate p-values'))){
-    dir.create(file.path(workDir, 'Covariate p-values'))
+for(d in c('Covariate p-values', 'Betas', 'Null Models')){
+    if( !dir.exists( file.path(workDir, d) ) ) {
+    dir.create(file.path(workDir, d))
+    }
 }
 
 miss_cst = c(REC = 'REC_CST_3', NAS = 'NAS_CST_3', THR = 'THR_CST_3')
