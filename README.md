@@ -16,7 +16,7 @@ Requires R 3.4.3 and Bioconductor 3.5.
 1.  Clone this repo
 2.  From the repo root, run
 ```r
-install("CoordinatedMPDeps", dependencies = TRUE)
+install("CoordinatedMBDeps", dependencies = TRUE)
 ```
 This will install all needed dependencies. **Caution: this might downgrade your bioconductor installation to version 3.5.**
 Before starting R you may wish to set the environment variable `R_LIBS_USER` -- or within R `.libPaths()` -- to an unused directory before proceeding.  Or use the bioconductor 3.5 AMI or docker images...
