@@ -1,8 +1,7 @@
 # CoordinatedMicrobiome
-Analysis for "Neonatal gut and respiratory microbiota: coordinated development through time and space".
+Analysis for [Neonatal gut and respiratory microbiota: coordinated development through time and space](https://www.biorxiv.org/content/early/2018/01/19/247122).
 
-# Todo
-  - Add a pseudopackage to reduce R package installation burden
+Requires R 3.4.3 and Bioconductor 3.5.
 
 # Contents
 
@@ -13,40 +12,17 @@ Analysis for "Neonatal gut and respiratory microbiota: coordinated development t
   - DMN Cluster Selection/ : Dirichlet Multionomial model search
   - SingleIndex/ : R package used to fit single index models
 
-# Required libraries/software
+# To run
+1.  Clone this repo
+2.  From the repo root, run
+```r
+install("CoordinatedMPDeps", dependencies = TRUE)
+```
+This will install all needed dependencies. Caution: this might downgrade your bioconductor installation to version 3.5. 
+You may wish to set the environment variable `R_LIBS_USER` or within R `.libPaths()` to an unused directory before proceeding.  (Or use the bioconductor 3.5 AMI or docker images...)
+3.  `rmarkdown::render` various .Rmd to reproduce analysis.
 
-R 3.4.3 and the following:
-
-  library(ComplexHeatmap)
-  library(DT)
-  library(DirichletMultinomial)
-  library(GGally)
-  library(SummarizedExperiment)
-  library(biomformat)
-  library(broom)
-  library(circlize)
-  library(data.table)
-  library(dplyr)
-  library(dtplyr)
-  library(forcats)
-  library(ggplot2)
-  library(ggrepel)
-  library(ggthemes)
-  library(mgcv)
-  library(phyloseq)
-  library(readr)
-  library(readxl)
-  library(reshape2)
-  library(stringr)
-  library(tidyr)
-  library(tidyverse)
-  library(whoami)
-  library(knitr)
-  library(plyr)
-  library(purrr)
-  library(splines)
-  library(cowplot)
-  library(tibble)
-  library(viridis)
-  library(circlize)
-  library(devtools)
+# Updates
+ - Added pseudopackage to collect dependencies
+ - Removed some obsolete code
+ - Added some missing data files

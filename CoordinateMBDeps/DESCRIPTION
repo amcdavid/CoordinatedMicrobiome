@@ -1,0 +1,51 @@
+Package: CoordinatedMBDeps
+Title: Package dependencies for microbiome analysis
+Version: 0.90
+Authors@R: "Andrew McDavid
+     <Andrew_McDavid@urmc.rochester.edu> [aut,cre]"
+Description: Collects dependencies for this microbiome analysis.  
+Install with devtools: :install('CoordinatedMBDeps', dependencies = TRUE) to get all necessary packages.
+Depends: R (>= 3.4.3)
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+Requires:
+  devtools
+Suggests:
+  DT,
+  GGally,
+  broom,
+  data.table,
+  dplyr,
+  dtplyr,
+  forcats,
+  ggplot2,
+  ggrepel,
+  ggthemes,
+  mgcv,
+  readr,
+  readxl,
+  reshape2,
+  stringr,
+  tidyr,
+  tidyverse,
+  whoami,
+  knitr,
+  plyr,
+  purrr,
+  splines,
+  cowplot,
+  tibble,
+  viridis,
+  circlize,
+  ComplexHeatmap,
+  biomformat,
+  phyloseq,
+  SummarizedExperiment,
+  DirichletMultinomial
+Remotes: bioc::3.5/ComplexHeatmap,
+  bioc::3.5/DirichletMultinomial,
+  bioc::3.5/biomformat,
+  bioc::3.5/SummarizedExperiment,
+  bioc::3.5/phyloseq
+RoxygenNote: 6.0.1
