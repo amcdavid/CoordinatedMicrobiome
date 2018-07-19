@@ -73,19 +73,9 @@ cowplot::plot_grid(plotlist = site_plots, labels = names(site_plots), nrow = 3)
 ```
 
 ```{r abundance, fig.height= 8, fig.width = 8}
-Sites = c('NAS', 'THR', 'REC')
-Plts = list()
-#otu_avg_cst_lst = list()
-for(s in Sites){
+
     otu_avg_cst = read_table2('DMN Cluster Selection/CST_Comp_Table_L7.txt', comment = '#') %>% melt() %>% mutate(site = str_extract(variable, 'NAS|REC|THR')) %>% left_join(print_labels %>% mutate(OTU_ID = str_replace_all(OrigName, fixed('|'), ';'))) %>% mutate(print_label = ifelse(is.na(`Printable Label`), OTU_ID, `Printable Label`))
-    otu_avg_cst = otu_avg_cst %>% group_by(OTU_ID, site) %>% mutate(max_value = var(value)) %>% group_by(site, variable) %>% mutate(site_rank = rank(-max_value)) 
-otu_avg_cst_lst = otu_avg_cst
-    otu_avg_cst = otu_avg_cst %>% filter(site == s, site_rank < 30) %>% mutate(OTU_ID = forcats::fct_reorder(factor(OTU_ID), .x = site_rank)) %>% group_by(variable, site) %>% arrange(desc(OTU_ID), .by_group = TRUE) %>% mutate(cum_sum = cumsum(value), lab_pos = lag(cum_sum), line_pos = cum_sum - value/2)
-
-    Plts[[s]] = ggplot(otu_avg_cst, aes(x = variable, group = OTU_ID, fill = print_label)) + geom_col(aes(y = value), alpha = .9) + geom_path(aes(y = line_pos, color = print_label)) +geom_text(aes(y = lab_pos, label = print_label), angle = 45, hjust = 0, vjust = 0, size = 2)+ theme_classic()+  scale_color_brewer(type = 'div', palette = 'RdYlGn') + scale_fill_brewer(type = 'div', palette = 'RdYlGn')+  theme(legend.position = 'none', axis.text.x = element_text(angle = 45)) + ylab("Average cummulative abundance") 
-}
-
-cowplot::plot_grid(plotlist = Plts, labels = Sites, ncol = 3)
+    otu_avg_cst_lst = otu_avg_cst %>% group_by(OTU_ID, site) %>% mutate(max_value = var(value)) %>% group_by(site, variable) %>% mutate(site_rank = rank(-max_value)) 
 
 ```
 
