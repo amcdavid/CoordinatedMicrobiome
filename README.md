@@ -1,8 +1,8 @@
 # CoordinatedMicrobiome
-Analysis for "Neonatal gut and respiratory microbiota: coordinated development through time and space"
+Analysis for "Neonatal gut and respiratory microbiota: coordinated development through time and space".
 
 # Todo
-  - CCA.Rmd should use data in data/ rather than it's own .biom files
+  - Add a pseudopackage to reduce R package installation burden
 
 # Contents
 
