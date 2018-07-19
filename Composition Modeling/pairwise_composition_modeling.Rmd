@@ -33,12 +33,8 @@ nasWts <- c("NAS_CST_1", "NAS_CST_2", "NAS_CST_4", "NAS_CST_5", "NAS_CST_6", "NA
 recWts <- c("REC_CST_1", "REC_CST_2", "REC_CST_4", "REC_CST_5", "REC_CST_6") #Base case is CST 3
 dataDir = '../data'
 derivedDir = '../DMN Cluster Selection/'
-workDir <- "./"##~/Desktop/MiSeq_Projects/12.00012_Microbiome_Master/Substudy_2_1a/analysis/stage_analysis_workspace/rigor_analysis/composition_modeling_data/workspace" #Directory where files will be read from and written to
+workDir <- "./" #Directory where files will be read from and written to
 minSampFrac <- 0.05 #Minimum fraction of samples in which an OTUs abundance must be non-zero in order to be included
-
-andrew_rsq = function(empty, null, full){
-    (deviance(full) - deviance(null))/deviance(empty)
-}
 
 nakagawa_rsq = function(empty, null, full, type='R2m'){
     type = match.arg(type, c('R2m', 'R2c'))
@@ -135,9 +131,7 @@ for (site in bodySites) {
         pvals[otu_i] <- f_test[[otu_i]]$`p-value`[2] #Save the p-value of each test
         
         #Compute R-squared value associated with the inclusion of the cluster weights of the other body sites
-        #rsq[otu_i] = andrew_rsq(empty_fits[[otu_i]], null_fits[[otu_i]], full_fits[[otu_i]])
         rsq[otu_i] = nakagawa_rsq(empty_fits[[otu_i]], null_fits[[otu_i]], full_fits[[otu_i]])
-         #browser(expr=otu_ids[otu_i] == 'k__Bacteria.p__Actinobacteria.c__Actinobacteria.o__Actinomycetales.f__Corynebacteriaceae.g__Corynebacterium.s__')
         
         }
       

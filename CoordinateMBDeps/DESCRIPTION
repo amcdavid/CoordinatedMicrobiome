@@ -42,7 +42,9 @@ Suggests:
   biomformat,
   phyloseq,
   SummarizedExperiment,
-  DirichletMultinomial
+  DirichletMultinomial,
+  car,
+  nlme
 Remotes: bioc::3.5/ComplexHeatmap,
   bioc::3.5/DirichletMultinomial,
   bioc::3.5/biomformat,

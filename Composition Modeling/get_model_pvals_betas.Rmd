@@ -23,10 +23,12 @@ library(broom)
 #Hard coded constants
 bodySites <- c("THR", "NAS", "REC")
 taxLevels <- c("L2", "L3", "L4", "L5", "L6", "L7")
-# workDir <- "~/Desktop/MiSeq_Projects/12.00012_Microbiome_Master/Substudy_2_1a/analysis/stage_analysis_workspace/rigor_analysis/composition_modeling_data/workspace"
 #relative to the path of this script
 workDir = './'
-#Directory where files will be read from and written to
+
+if(!dir.exists(file.path(workDir, 'Covariate p-values'))){
+    dir.create(file.path(workDir, 'Covariate p-values'))
+}
 
 miss_cst = c(REC = 'REC_CST_3', NAS = 'NAS_CST_3', THR = 'THR_CST_3')
 present_cst = list(THR = c("THR_CST_1", "THR_CST_2", "THR_CST_4", "THR_CST_5", "THR_CST_6"),
