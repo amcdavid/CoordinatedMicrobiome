@@ -10,7 +10,8 @@ License: GPL-3
 Encoding: UTF-8
 LazyData: true
 Requires:
-  devtools
+  devtools,
+  roxygen2
 Suggests:
   DT,
   GGally,
