@@ -236,45 +236,4 @@ ggplot(cv_dof_flat, aes(x = coordinate, y = mean, color = sample, fill = sample)
 
 Removing Participant ID is like random effects model.
 
-1. For NAS/REC, NAS/THR, REC/THR
-2. Find reduced model
-3. Do CCA CV (and pick number of coordinates)
-4. Show canonical coordinates
-
-```{r full_cc}
-full_dof = cv_dof = dof_df %>% group_by_all() %>% do(cv_coord = {
-    env = environment()
-    env$dof = .$dof
-    ## for some reason, spline can't find DOF unless we do this.  something about forcing evaluation.
-    formula_ = if(.$dof>1){
-        as.formula(sprintf('~splines::ns(DOL, %s)', .$dof))}
-    else if(.$dof==1){
-        formula(~DOL)
-        } else{
-            formula(~1)
-        }
-    do_cc(pairs[[.$pair]][[1]], pairs[[.$pair]][[2]], formula_ = formula_, center = FALSE)
-})
-
-
-```
-
-
-
-```{r cc_loadings, fig.width = 12, fig.height = 8}
-cc_scores = full_dof %>% rowwise() %>% mutate(scores = {
-    mx = melt(cv_coord$xcoef[,1:3], variable.factor = FALSE) %>% mutate(var = 'x')
-    my = melt(cv_coord$ycoef[,1:3], variable.factor = FALSE)  %>% mutate(var = 'y')
-    list(rbind(mx, my))
-}) %>% select(-cv_coord) %>% unnest()
-max_val = cc_scores %>% group_by(dof, pair, Var1, var) %>% summarize(max_val = max(abs(value))) %>% group_by(dof, pair, var) %>% mutate(rank_max = rank(-max_val)) %>% filter(rank_max < 20)
-
-cc_scores = left_join(max_val, cc_scores) %>% filter(dof == 14)
-
-
-
-ggplot(cc_scores, aes(x=reorder(Var1, value, min), y=value, color=var, label = Var2)) + geom_text() + facet_wrap(~pair, scales='free') + coord_flip() + theme_minimal()
-
-```
-Coordinates
 
